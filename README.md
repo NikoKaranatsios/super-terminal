@@ -38,12 +38,21 @@ The installed app bundles its own Electron/Node runtime and starts its loopback 
 
 | Shortcut | Action |
 | --- | --- |
-| ⌘N | New terminal in the selected environment |
+| ⌘N | New window |
+| ⌘T | New terminal tab in the selected environment |
+| ⌘D / ⇧⌘D | Split right / below |
+| ⌘] | Focus next panel |
+| ⌘W / ⇧⌘W | Close tab / window |
 | ⌘1 | Conductor |
 | ⌘2 | Environment selector |
+| ⌘3 | Activity |
 | ⌘, | Settings |
 
-**File → New Agent** starts Codex, Claude, or Grok with default instructions in the selected location. Settings contains terminal text size, the automatic first briefing, and agent startup prompts. The window uses a normal macOS title bar and plain terminal styling.
+**File → New Agent** starts Codex, Claude, or Grok with default instructions in the selected location. Settings contains text size, completion notifications, the automatic first briefing, and agent startup prompts. The app follows Apple Terminal’s Basic appearance: white background, black Menlo text, gray tabs, and native macOS window chrome. Each agent CLI retains its own formatting.
+
+Use **Split Right** or **Split Below** to display up to six panels per window. Click a panel and select an agent from the sidebar. Drag the sidebar or panel dividers to resize; double-click a panel divider to return to equal sizes. Focused dividers also respond to arrow keys. Tab selection and split proportions survive a reload and restore in the main window when reopening. **New Window** in the toolbar opens the selected conversation in a separate desktop window. Closing a tab detaches the screen without stopping its agent.
+
+Completion notifications are on by default. Clicking an alert opens its conversation; **Activity** retains the latest 200 events across all locations. Explicit successful end-of-turn log records trigger “finished a response”; disappearing agent processes trigger a separate “exited” alert. This does not certify that a project or task is complete. Old history and SSH outages do not trigger alerts. Detection uses no AI calls and continues with windows closed while the app runs. Local updates normally arrive within about 20 seconds, remote completions within about a minute plus SSH scan time. Providers without readable completion records can only be detected when the process exits. macOS notification permissions and Focus control banners and sound; Settings includes a test button.
 
 Closing the window keeps the app running on macOS. Quitting stops the local service, browser tools and active Conductor request; tmux terminals survive and reconnect next time. Rebooting ends processes but preserves conversation histories and app data.
 

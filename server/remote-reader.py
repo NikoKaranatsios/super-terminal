@@ -22,6 +22,19 @@ def records(file, limit=131072):
 def iso(value):
     return datetime.datetime.fromtimestamp(value, datetime.timezone.utc).isoformat()
 
+def completion(provider, file):
+    if provider == 'grok': file = str(Path(file).parent/'events.jsonl')
+    try:
+        if os.stat(file).st_mtime < time.time()-86400: return None
+    except OSError: return None
+    latest = None
+    for r in records(file, 262144):
+        p = r.get('payload', {})
+        done = (provider == 'codex' and r.get('type') == 'event_msg' and p.get('type') == 'task_complete') or (provider == 'claude' and r.get('type') == 'assistant' and not r.get('isSidechain') and not r.get('isApiErrorMessage') and r.get('message', {}).get('stop_reason') == 'end_turn') or (provider == 'grok' and r.get('type') == 'turn_ended' and r.get('outcome') in ('completed','success'))
+        at = r.get('timestamp') or r.get('ts')
+        if done and at: latest = dict(key=str(r.get('uuid') or p.get('turn_id') or at), at=at)
+    return latest
+
 def content(value):
     if isinstance(value, str): return value
     if isinstance(value, list): return '\n'.join(c.get('text', '') for c in value if c.get('type') in ('text','input_text','output_text'))
@@ -141,6 +154,8 @@ if sys.argv[1]=='transcript':
     if not session: raise RuntimeError('Conversation no longer exists on this host.')
     print(json.dumps(dict(messages=messages(session['provider'],records(session['file'],2*1024*1024)))))
 else:
-    if sys.argv[1]=='index': result['history']=indexes(result['processes'])
+    if sys.argv[1]=='index':
+        result['history']=indexes(result['processes'])
+        for row in result['history']: row['completion']=completion(row['provider'],row['file'])
     result['elevatedRead']=bool(os.environ.get('SUDO_USER'))
     print(json.dumps(result))

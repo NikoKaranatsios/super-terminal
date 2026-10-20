@@ -12,6 +12,7 @@ import { tmuxSessions, externalTerminals, scanRemote, remoteRead } from './disco
 import { AgentBrowsers } from './browsers.mjs';
 import { performAction } from './conductor-actions.mjs';
 import { Coordinator } from './coordinator.mjs';
+import { ActivityMonitor } from './activity.mjs';
 import { allowedHosts, connections, defaultPrompt, prepareBridge, startupPrompt, publicSession } from './agent-platform.mjs';
 import { parseTopics, workProgress, resolveScope, scopeContext, canCommunicate, carryProjects, mergeProjects, wrapSummary } from './work-sessions.mjs';
 
@@ -32,6 +33,8 @@ store.save();
 const remoteCache = new Map();
 const history = new EnvironmentHistory(new History(), remoteCache, remoteRead);
 store.state.preferences ||= { fontSize: 13, automaticBriefing: true };
+store.state.preferences.notifyOnFinish ??= true;
+const activity = new ActivityMonitor(store);
 const browsers = new AgentBrowsers();
 const coordinator = new Coordinator(store);
 coordinator.liveReader = liveSessions;
@@ -100,7 +103,7 @@ app.get('/api/state', route(async (req, res) => {
   res.json({
     sessions, history: conversations.map(publicHistory), hosts: store.state.hosts, hostNames: Object.fromEntries(connections.map(c => [c.target, c.name])),
     remote: allowedHosts.map(host => { const r = remoteCache.get(host); return { host, scannedAt: r?.scannedAt, error: r?.error, scanning: scanTasks.has(host), historyCount: r?.history?.length || 0, elevatedRead: r?.elevatedRead || false }; }),
-    preferences: store.state.preferences,
+    preferences: store.state.preferences, activity: store.state.activity,
     home, defaultCwd: path.join(home, 'Projects'), prompts: store.state.prompts,
     coordinator: coordinator.status(), messages: store.state.messages.slice(-100),
     teams: store.state.teams, projects: store.state.projects,
@@ -111,6 +114,7 @@ app.get('/api/state', route(async (req, res) => {
   });
 }));
 app.get('/api/messages', (req, res) => res.json(store.state.messages.filter(m => !req.query.group || m.group === req.query.group)));
+app.get('/api/activity', (req, res) => res.json({ events: store.state.activity, enabled: store.state.preferences.notifyOnFinish }));
 app.get('/api/history/:id', route(async (req, res) => res.json(await history.transcript(req.params.id))));
 
 async function createSession(body) {
@@ -400,6 +404,7 @@ app.put('/api/preferences', route(async (req, res) => {
     store.state.preferences.fontSize = size;
   }
   if (typeof req.body.automaticBriefing === 'boolean') store.state.preferences.automaticBriefing = req.body.automaticBriefing;
+  if (typeof req.body.notifyOnFinish === 'boolean') store.state.preferences.notifyOnFinish = req.body.notifyOnFinish;
   store.save(); res.json(store.state.preferences);
 }));
 app.get('/api/context', route(async (req, res) => {
@@ -496,6 +501,22 @@ server.listen(port, '127.0.0.1', () => {
     for (const host of allowedHosts) refreshRemote(host);
     const scanTimer = setInterval(() => { if (!stopping) for (const host of allowedHosts) refreshRemote(host); }, 20000);
     scanTimer.unref();
+    let checking = false;
+    const checkActivity = async () => {
+      if (checking || stopping) return; checking = true;
+      try {
+        const [rows, sessions] = await Promise.all([history.all(), liveSessions()]);
+        activity.histories('local', rows.filter(r => r.host === 'local'));
+        activity.processes('local', sessions);
+        for (const host of allowedHosts) {
+          const remote = remoteCache.get(host);
+          if (remote?.scannedAt && !remote.error) activity.histories(host, remote.history || []);
+          activity.processes(host, sessions, !!remote?.scannedAt && !remote.error);
+        }
+      } finally { checking = false; }
+    };
+    checkActivity().catch(() => {});
+    const activityTimer = setInterval(() => checkActivity().catch(() => {}), 5000); activityTimer.unref();
   }
 });
 let stopping = false;

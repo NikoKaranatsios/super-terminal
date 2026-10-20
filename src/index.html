@@ -15,7 +15,16 @@
     <details id="history"><summary>Conversations <span id="history-count"></span></summary><div id="history-list"></div></details>
     <button id="settings-nav" class="nav-item">Settings</button>
   </aside>
-  <main id="main"></main>
+  <div id="sidebar-divider" class="divider sidebar-divider" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" aria-valuemin="150" aria-valuemax="460" tabindex="0"></div>
+  <main id="main">
+    <div id="window-toolbar" role="toolbar" aria-label="Window layout">
+      <button data-layout="row" title="Split Right (⌘D)">Split Right</button>
+      <button data-layout="column" title="Split Below (⇧⌘D)">Split Below</button>
+      <button id="new-window" title="Open selected tab in a new window">New Window</button>
+      <span class="toolbar-spacer"></span><button id="notifications-nav" title="Recent agent notifications">Activity <span id="activity-count"></span></button>
+    </div>
+    <div id="workspace"></div><div id="view-cache" hidden></div>
+  </main>
   <div id="notice" role="status" aria-live="polite" hidden></div>
   <script src="/app.js" type="module"></script>
 </body>

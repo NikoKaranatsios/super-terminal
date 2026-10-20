@@ -7,3 +7,4 @@ dist/
 .super-terminal/
 release/
 build-assets/
+__pycache__/

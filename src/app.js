@@ -1,12 +1,52 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import './style.css';
+import { Workspace } from './workspace.mjs';
 
 const $ = s => document.querySelector(s);
 const token = $('meta[name="super-terminal-token"]').content;
 const escape = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let state, environment = localStorage.getItem('environment') || 'local', selected = 'conductor', refreshing = false, bootBriefing = false;
 const views = new Map();
+const initial = new URLSearchParams(location.hash.slice(1));
+const workspaceKey = 'workspace:'+(initial.get('window') || 'main');
+const layout = new Workspace(localStorage.getItem(workspaceKey));
+if(initial.get('environment')) environment=initial.get('environment');
+let restoring=false;
+const terminalTheme={background:'#ffffff',foreground:'#000000',cursor:'#000000',selectionBackground:'#b5d5ff',black:'#000000',red:'#990000',green:'#008000',yellow:'#999900',blue:'#0000b2',magenta:'#b200b2',cyan:'#008b8b',white:'#bfbfbf',brightBlack:'#666666',brightRed:'#e50000',brightGreen:'#00a600',brightYellow:'#b5a000',brightBlue:'#0000ff',brightMagenta:'#e500e5',brightCyan:'#00a6a6',brightWhite:'#ffffff'};
+function saveWorkspace(){localStorage.setItem(workspaceKey,layout.serialize());}
+function tabLabel(id){const s=[...(state?.sessions||[]),...(state?.history||[])].find(s=>s.id===id);return id==='conductor'?'Conductor':id==='settings'?'Settings':id==='activity'?'Activity':id.startsWith('messages:')?id.slice(9)||'Team messages':s?.role || s?.title || views.get(id)?.title || 'Terminal';}
+function focusPane(paneId){const pane=layout.focus(paneId);selected=pane.active || '';for(const el of document.querySelectorAll('.pane'))el.classList.toggle('focused',el.dataset.pane===paneId);document.title=(tabLabel(selected)||'Super Terminal')+' — Super Terminal';if(state)sidebar();saveWorkspace();}
+function renderWorkspace(){
+  const cache=$('#view-cache');for(const v of views.values()){v.element.hidden=true;cache.append(v.element);}
+  const draw=node=>node.axis?`<div class="split ${node.axis}" data-split="${node.id}" style="--ratio:${node.ratio}">${draw(node.first)}<div class="divider" role="separator" tabindex="0" aria-label="Resize panels" aria-orientation="${node.axis==='row'?'vertical':'horizontal'}" aria-valuemin="15" aria-valuemax="85" aria-valuenow="${Math.round(node.ratio*100)}" data-divider="${node.id}"></div>${draw(node.second)}</div>`:`<section class="pane${node.id===layout.activePane?' focused':''}" data-pane="${node.id}"><div class="tab-bar" role="tablist" aria-label="Panel tabs">${node.tabs.map(id=>`<div class="tab${node.active===id?' active':''}"><button role="tab" aria-selected="${node.active===id}" data-tab="${escape(id)}" title="${escape(tabLabel(id))}">${escape(tabLabel(id))}</button><button class="close-tab" data-close="${escape(id)}" aria-label="Close ${escape(tabLabel(id))} tab">×</button></div>`).join('')}<button class="add-tab" data-add-tab="${node.id}" aria-label="New terminal tab">＋</button></div><div class="pane-content"><div class="panel-empty">Select an agent in the sidebar.<br><button data-close-panel="${node.id}">Close panel</button></div></div></section>`;
+  $('#workspace').innerHTML=draw(layout.root);
+  for(const pane of layout.panes()){
+    const content=document.querySelector(`[data-pane="${pane.id}"] .pane-content`);const active=views.get(pane.active);
+    if(active){content.replaceChildren(active.element);active.element.hidden=false;}
+  }
+  for(const v of views.values())if(!v.element.hidden)v.resize?.();
+  saveWorkspace();
+}
+async function splitPanel(axis){try{layout.split(axis);renderWorkspace();const opened=new Set(layout.panes().flatMap(p=>p.tabs));const next=state.sessions.find(s=>s.host===environment&&!s.runtime&&!opened.has(s.id)&&['running','external','paused'].includes(s.status));if(next)await open(next.id);else focusPane(layout.activePane);}catch(e){notice(e.message);}}
+function closeTab(id){const v=views.get(id);v?.ws?.close();v?.observer?.disconnect();v?.term?.dispose();v?.element.remove();views.delete(id);layout.close(id);renderWorkspace();focusPane(layout.activePane);}
+function openWindow(){if(window.superTerminalDesktop?.openWindow)window.superTerminalDesktop.openWindow({viewId:selected || 'conductor',environment});else notice('Separate windows are available in the desktop app.');}
+function installDividers(){
+  let drag;
+  const sidebarWidth=value=>{const width=Math.max(150,Math.min(Math.min(460,innerWidth*.45),value));$('#sidebar').style.width=width+'px';localStorage.setItem('sidebarWidth',width);$('#sidebar-divider').setAttribute('aria-valuenow',Math.round(width));};
+  sidebarWidth(Number(localStorage.getItem('sidebarWidth'))||220);
+  document.addEventListener('pointerdown',e=>{
+    const divider=e.target.closest('.divider');if(!divider)return;
+    e.preventDefault();divider.focus();divider.setPointerCapture(e.pointerId);document.body.classList.add('resizing');
+    drag={divider,pointer:e.pointerId,sidebar:divider.id==='sidebar-divider',node:layout.nodes().find(n=>n.id===divider.dataset.divider),rect:divider.parentElement.getBoundingClientRect()};
+  });
+  document.addEventListener('pointermove',e=>{if(!drag)return;if(drag.sidebar){sidebarWidth(e.clientX);return;}const {node,rect,divider}=drag;const value=node.axis==='row'?(e.clientX-rect.left)/rect.width:(e.clientY-rect.top)/rect.height;layout.resize(node.id,value);divider.parentElement.style.setProperty('--ratio',node.ratio);divider.setAttribute('aria-valuenow',Math.round(node.ratio*100));});
+  const end=()=>{if(drag){drag=null;document.body.classList.remove('resizing');saveWorkspace();}};
+  document.addEventListener('pointerup',end);document.addEventListener('pointercancel',end);
+  document.addEventListener('keydown',e=>{const divider=e.target.closest('.divider');if(!divider||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();const delta=['ArrowRight','ArrowDown'].includes(e.key)?1:-1;if(divider.id==='sidebar-divider')sidebarWidth($('#sidebar').getBoundingClientRect().width+delta*20);else{const node=layout.nodes().find(n=>n.id===divider.dataset.divider);layout.resize(node.id,node.ratio+delta*.05);divider.parentElement.style.setProperty('--ratio',node.ratio);divider.setAttribute('aria-valuenow',Math.round(node.ratio*100));saveWorkspace();}});
+  document.addEventListener('dblclick',e=>{const divider=e.target.closest('[data-divider]');if(divider){layout.resize(divider.dataset.divider,.5);divider.parentElement.style.setProperty('--ratio',.5);saveWorkspace();}});
+}
+
 async function api(url, body, method = 'POST') {
   const response = await fetch('/api' + url, { method: body === undefined ? 'GET' : method, headers: { 'Content-Type':'application/json', 'X-Super-Terminal':token }, ...(body === undefined ? {} : { body:JSON.stringify(body) }) });
   const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Connection failed'); return data;
@@ -48,14 +88,14 @@ function sidebar() {
 }
 function view(id, markup) {
   if (!views.has(id)) {
-    const element = document.createElement('section'); element.className = 'view'; element.innerHTML = markup; element.hidden = true; $('#main').append(element); views.set(id,{ element });
+    const element = document.createElement('section'); element.className = 'view'; element.innerHTML = markup; element.hidden = true; $('#view-cache').append(element); views.set(id,{ element });
   }
   return views.get(id);
 }
 function activate(id, title) {
-  selected = id; for (const [key,v] of views) v.element.hidden = key !== id;
-  document.title = `${title} — Super Terminal`;
-  sidebar();
+  const v=views.get(id);if(v)v.title=title;
+  if(restoring)return;
+  layout.open(id);selected=id;renderWorkspace();focusPane(layout.activePane);
 }
 function chat() {
   const v = view('conductor', '<div class="caption"><span class="path">Conductor · all environments</span><button id="review-next">Review more history</button></div><div id="chat-output" class="output" role="log" aria-live="polite"></div><div id="chat-progress"></div><form id="chat-form"><span>›</span><textarea id="chat-input" rows="1" maxlength="6000" aria-label="Message Conductor" placeholder="Ask Conductor…"></textarea><button type="submit" id="send-chat">Send</button><button type="button" id="stop-chat" hidden>Stop</button></form>');
@@ -95,10 +135,10 @@ function connectTerminal(s) {
   const v = view(s.id, `<div class="caption"><span class="path">${escape(s.connectionLost ? 'SSH ended · local recovery shell' : s.cwd+' · '+hostName(s.host))}</span><span class="connection">Connecting…</span><button class="reconnect" hidden>Reconnect</button></div><div class="terminal"></div>`);
   activate(s.id, `${s.provider} — ${hostName(s.host)}`);
   if (!v.term) {
-    v.term = new Terminal({ cursorBlink: true, fontFamily:'Menlo, Monaco, monospace', fontSize:state.preferences.fontSize, lineHeight:1.15, scrollback:10000, theme:{ background:'#161616', foreground:'#ddd', cursor:'#ddd', selectionBackground:'#4a5568' }, allowProposedApi:false });
+    v.term = new Terminal({ cursorBlink: true, fontFamily:'Menlo, Monaco, monospace', fontSize:state.preferences.fontSize, lineHeight:1.15, scrollback:10000, theme:terminalTheme, allowProposedApi:false });
     v.fit = new FitAddon(); v.term.loadAddon(v.fit); v.term.open(v.element.querySelector('.terminal'));
     v.resize = () => { if (v.element.hidden) return; try { v.fit.fit(); if (v.ws?.readyState === 1) v.ws.send(JSON.stringify({type:'resize',cols:v.term.cols,rows:v.term.rows})); } catch {} };
-    new ResizeObserver(v.resize).observe(v.element.querySelector('.terminal'));
+    v.observer=new ResizeObserver(v.resize);v.observer.observe(v.element.querySelector('.terminal'));
     v.term.onData(data => { if (v.ws?.readyState === 1) v.ws.send(JSON.stringify({type:'input',data})); });
     v.connect = () => {
       if (v.ws && v.ws.readyState < 2) return;
@@ -156,18 +196,34 @@ async function renderMessages(group) {
     if(v.markup!==markup){output.innerHTML=markup;v.markup=markup;if(bottom)output.scrollTop=output.scrollHeight;}
   } catch(e){notice(e.message);} finally{v.loading=false;}
 }
+function activity() {
+  view('activity','<div class="caption"><span class="path">Activity · all environments</span><button id="mark-activity-read">Mark read</button></div><div id="activity-output" class="output" role="log"></div>');
+  activate('activity','Activity');
+  $('#mark-activity-read').onclick=()=>{localStorage.setItem('activityReadAt',new Date().toISOString());renderActivity();};
+  renderActivity();
+}
+function renderActivity() {
+  const events=state?.activity || [], readAt=localStorage.getItem('activityReadAt') || '';
+  const unread=events.filter(e=>e.at>readAt).length;$('#activity-count').textContent=unread?`(${unread})`:'';
+  if(!$('#activity-output'))return;
+  const markup=[...events].reverse().map(e=>`<button class="activity-item" data-id="${escape(e.target)}"><span>${escape(e.provider)} ${e.kind==='finished'?'finished a response':'exited'} · ${escape(hostName(e.host))}</span><small>${escape(e.title)} · ${new Date(e.at).toLocaleString()}</small></button>`).join('') || '<div class="muted">New agent completions appear here while Super Terminal is running. Old conversations do not generate alerts.</div>';
+  replaceMarkup('#activity-output',markup);
+}
 function settings() {
-  const v = view('settings','<div class="settings"><h1>Settings</h1><label for="font-size">Terminal text size</label><select id="font-size">'+Array.from({length:13},(_,i)=>`<option>${i+10}</option>`).join('')+'</select><label><input id="automatic-briefing" type="checkbox"> Automatic first briefing</label><p>One briefing when Conductor has no conversation yet. Further reviews run only when you ask.</p><h1 style="margin-top:30px">Agent startup prompts</h1><p>Applied to new agents. Existing terminals keep their current instructions.</p>'+['codex','claude','grok'].map(p=>`<label for="prompt-${p}">${p}</label><textarea id="prompt-${p}" maxlength="12000"></textarea>`).join('')+'<button id="save-prompts">Save prompts</button><p id="saved" role="status"></p></div>');
+  const v = view('settings','<div class="settings"><h1>Settings</h1><label for="font-size">Terminal text size</label><select id="font-size">'+Array.from({length:13},(_,i)=>`<option>${i+10}</option>`).join('')+'</select><label><input id="automatic-briefing" type="checkbox"> Automatic first briefing</label><p>One briefing when Conductor has no conversation yet. Further reviews run only when you ask.</p><label><input id="notify-finish" type="checkbox"> Notify when an agent finishes</label><p>Desktop alerts and an Activity log. Click an alert to open the agent. macOS notification preferences control banners and sound.</p><button id="test-notification">Test notification</button><h1 style="margin-top:30px">Agent startup prompts</h1><p>Applied to new agents. Existing terminals keep their current instructions.</p>'+['codex','claude','grok'].map(p=>`<label for="prompt-${p}">${p}</label><textarea id="prompt-${p}" maxlength="12000"></textarea>`).join('')+'<button id="save-prompts">Save prompts</button><p id="saved" role="status"></p></div>');
   activate('settings','Settings');
   $('#font-size').value = state.preferences.fontSize;
   $('#automatic-briefing').checked = state.preferences.automaticBriefing;
+  $('#notify-finish').checked=state.preferences.notifyOnFinish;
+  $('#notify-finish').onchange=e=>api('/preferences',{notifyOnFinish:e.target.checked},'PUT').then(p=>state.preferences=p).catch(e=>notice(e.message));
+  $('#test-notification').onclick=()=>window.superTerminalDesktop?.testNotification ? window.superTerminalDesktop.testNotification().then(ok=>notice(ok?'Notification sent. macOS controls whether banners and sound appear.':'Desktop notifications are unavailable.')) : notice('Open the desktop app to receive notifications.');
   for(const p of ['codex','claude','grok']) $('#prompt-'+p).value = state.prompts[p];
-  $('#font-size').onchange = async e => { try { state.preferences = await api('/preferences',{fontSize:Number(e.target.value)},'PUT'); for(const v of views.values()) if(v.term) {v.term.options.fontSize=state.preferences.fontSize; v.resize();} } catch(e) {notice(e.message);} };
+  $('#font-size').onchange = async e => { try { state.preferences = await api('/preferences',{fontSize:Number(e.target.value)},'PUT');document.documentElement.style.setProperty('--text-size',state.preferences.fontSize+'px'); for(const v of views.values()) if(v.term) {v.term.options.fontSize=state.preferences.fontSize; v.resize();} } catch(e) {notice(e.message);} };
   $('#automatic-briefing').onchange = e => api('/preferences',{automaticBriefing:e.target.checked},'PUT').then(p=>{state.preferences=p;}).catch(e=>notice(e.message));
   $('#save-prompts').onclick = async () => { try { const prompts=Object.fromEntries(['codex','claude','grok'].map(p=>[p,$('#prompt-'+p).value])); await api('/prompts',prompts,'PUT'); state.prompts=prompts; $('#saved').textContent='Saved.'; } catch(e) {notice(e.message);} };
 }
 async function open(id) {
-  const s = [...state.sessions,...state.history].find(s=>s.id === id); if(!s) return;
+  const s = [...state.sessions,...state.history].find(s=>s.id === id); if(!s) {const v=view(id,'<div class="output muted">Waiting for this agent to reconnect. You can also select its saved conversation in the sidebar.</div>');v.pending=true;activate(id,'Reconnecting…');return;}
   if(s.host !== environment) {environment=s.host; localStorage.setItem('environment',environment);}
   if(s.kind === 'history' || s.kind === 'external') await showConversation(s,s.kind === 'external'); else connectTerminal(s);
 }
@@ -181,10 +237,11 @@ async function newTerminal(provider = 'shell') {
 async function refresh() {
   if(refreshing) return; refreshing=true;
   try {
-    state = await api('/state'); sidebar(); renderChat();
-    const active = views.get(selected);
-    if(selected.startsWith('messages:')) renderMessages(selected.slice(9));
-    if(active?.source) { active.source = state.sessions.find(s=>s.id===selected) || active.source; updateConversation(active); }
+    state = await api('/state'); sidebar(); renderChat();document.documentElement.style.setProperty('--text-size',state.preferences.fontSize+'px');
+    for(const [id,v] of views)if(v.pending&&[...state.sessions,...state.history].some(s=>s.id===id)){v.element.remove();views.delete(id);const before=restoring,hostBefore=environment;restoring=true;await open(id);restoring=before;environment=hostBefore;localStorage.setItem('environment',environment);renderWorkspace();sidebar();}
+    for(const v of views.values())if(v.term&&v.term.options.fontSize!==state.preferences.fontSize){v.term.options.fontSize=state.preferences.fontSize;v.resize();}
+    for(const pane of layout.panes()){const active=views.get(pane.active);if(pane.active?.startsWith('messages:'))renderMessages(pane.active.slice(9));if(active?.source){active.source=state.sessions.find(s=>s.id===pane.active)||active.source;updateConversation(active);}}
+    renderActivity();
     if(!bootBriefing && state.preferences.automaticBriefing && !state.coordinator.history.length && state.remote.every(r=>r.scannedAt || r.error) && !state.coordinator.running) {
       bootBriefing=true; sendChat('Read recent saved agent conversations across all environments. Tell me what still looks open, what appears finished, and ask what I want to focus on. Do not assume old work is still a priority.',true);
     }
@@ -201,8 +258,26 @@ window.superTerminalDesktop?.onAction(action=>{
   if(action==='conductor' || action==='coordinator') chat();
   if(action==='settings') settings();
   if(action==='new-terminal') newTerminal();
-  if(action.startsWith('new-agent:')) newTerminal(action.split(':')[1]);
+  if(action==='split-right')splitPanel('row');
+  if(action==='split-below')splitPanel('column');
+  if(action==='close-tab')closeTab(selected);
+  if(action==='new-window')openWindow();
+  if(action==='activity')activity();
+  if(action==='next-panel'){const panes=layout.panes();focusPane(panes[(panes.findIndex(p=>p.id===layout.activePane)+1)%panes.length].id);views.get(selected)?.term?.focus();}
+  if(typeof action==='object'&&action.type==='show-agent'){if(action.host){environment=action.host;sidebar();}refresh().then(()=>open(action.id));return;}
+  if(typeof action==='string'&&action.startsWith('new-agent:')) newTerminal(action.split(':')[1]);
   if(action==='environment') $('#environment').focus();
 });
-await refresh(); if(state) chat();
+document.addEventListener('pointerdown',e=>{const pane=e.target.closest('[data-pane]');if(pane&&pane.dataset.pane!==layout.activePane)focusPane(pane.dataset.pane);});
+document.addEventListener('click',e=>{const split=e.target.closest('[data-layout]');if(split)splitPanel(split.dataset.layout);const tab=e.target.closest('[data-tab]');if(tab){layout.open(tab.dataset.tab);renderWorkspace();focusPane(layout.activePane);views.get(selected)?.term?.focus();}const close=e.target.closest('[data-close]');if(close)closeTab(close.dataset.close);const empty=e.target.closest('[data-close-panel]');if(empty){layout.removeEmpty(empty.dataset.closePanel);renderWorkspace();focusPane(layout.activePane);}const add=e.target.closest('[data-add-tab]');if(add){focusPane(add.dataset.addTab);newTerminal();}});
+$('#new-window').onclick=openWindow;$('#notifications-nav').onclick=activity;
+installDividers();renderWorkspace();
+await refresh();
+if(state){
+  const savedTabs=layout.panes().flatMap(p=>p.tabs),savedEnvironment=environment;restoring=true;
+  for(const id of savedTabs){if(id==='conductor')chat();else if(id==='settings')settings();else if(id==='activity')activity();else if(id.startsWith('messages:'))await messages(id.slice(9));else await open(id);}
+  restoring=false;environment=savedEnvironment;localStorage.setItem('environment',environment);renderWorkspace();focusPane(layout.activePane);
+  if(initial.get('view')){const id=initial.get('view');if(id==='conductor')chat();else if(id==='settings')settings();else if(id==='activity')activity();else if(id.startsWith('messages:'))messages(id.slice(9));else await open(id);}
+  if(!savedTabs.length&&!initial.get('view')){chat();await splitPanel('row');chat();}
+}
 setInterval(refresh,5000);
