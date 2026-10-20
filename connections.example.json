@@ -1,0 +1,4 @@
+[
+  { "name": "Development server", "target": "user@dev-server" },
+  { "name": "Project server", "target": "user@project-server" }
+]
