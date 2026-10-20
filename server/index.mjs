@@ -8,7 +8,7 @@ import { WebSocketServer } from 'ws';
 import * as pty from 'node-pty';
 import { createStore, home, shell, env, socket, tmux, tmuxRun, which, quote, text, localDirectory, repository, validHost, ensureContext } from './core.mjs';
 import { History, publicHistory } from './history.mjs';
-import { tmuxSessions, externalTerminals, sshAliases, scanRemote } from './discovery.mjs';
+import { tmuxSessions, externalTerminals, scanRemote } from './discovery.mjs';
 import { AgentBrowsers } from './browsers.mjs';
 import { Coordinator } from './coordinator.mjs';
 import { allowedHosts, connections, defaultPrompt, prepareBridge, startupPrompt, publicSession } from './agent-platform.mjs';
@@ -31,6 +31,7 @@ const browsers = new AgentBrowsers();
 const coordinator = new Coordinator(store);
 const remoteCache = new Map();
 const attachments = new Set();
+const launchingTeams = new Set();
 const providers = ['codex', 'claude', 'grok', 'shell'];
 const app = express();
 const server = http.createServer(app);
@@ -155,18 +156,23 @@ app.post('/api/sessions', route(async (req, res) => res.json(await createSession
 app.patch('/api/sessions/:id', route(async (req, res) => {
   const session = store.state.sessions.find(s => s.id === req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found.' });
-  if (req.body.title !== undefined) session.title = text(req.body.title, 200);
+  const update = { ...session }, messages = [];
+  if (req.body.title !== undefined) update.title = text(req.body.title, 200);
   if (req.body.group !== undefined) {
-    session.group = text(req.body.group, 120); ensureContext(session.group);
-    const team = store.state.teams.find(t => t.name === session.group);
-    if (team?.scope) session.scope = resolveScope(store.state.workSessions, team.scope);
-    if (team?.mission) sendMessage('you', session.id, `You have joined team "${team.name}". Shared mission:\n${team.mission}\nCheck peers and context for your scope. Coordinate ownership before starting overlapping work. Preserve your current work and normal approval requirements.`, team.name);
+    update.group = text(req.body.group, 120);
+    const team = store.state.teams.find(t => t.name === update.group);
+    if (team?.scope) update.scope = resolveScope(store.state.workSessions, team.scope);
+    if (team?.mission) messages.push(`You have joined team "${team.name}". Shared mission:\n${team.mission}\nCheck peers and context for your scope. Coordinate ownership before starting overlapping work. Preserve your current work and normal approval requirements.`);
   }
-  if (req.body.role !== undefined) session.role = text(req.body.role, 100);
+  if (req.body.role !== undefined) update.role = text(req.body.role, 100);
   if (req.body.scope !== undefined) {
-    session.scope = resolveScope(store.state.workSessions, req.body.scope);
-    if (session.scope) sendMessage('you', session.id, `Your working-session assignment:\n${JSON.stringify(scopeContext(store.state.workSessions, session.scope), null, 2)}\nCheck peers and coordinate before overlapping edits. Preserve current work and normal permissions.`, session.group);
+    update.scope = resolveScope(store.state.workSessions, req.body.scope);
+    if (update.scope) messages.push(`Your working-session assignment:\n${JSON.stringify(scopeContext(store.state.workSessions, update.scope), null, 2)}\nCheck peers and coordinate before overlapping edits. Preserve current work and normal permissions.`);
   }
+  // Validate the entire update before changing authorization scope or saving mail.
+  if (req.body.group !== undefined) ensureContext(update.group);
+  Object.assign(session, update);
+  for (const message of messages) sendMessage('you', session.id, message.slice(0, 12000), session.group);
   store.save(); res.json(publicSession(session));
 }));
 app.delete('/api/sessions/:id', route(async (req, res) => {
@@ -202,17 +208,19 @@ app.post('/api/work-sessions', route(async (req, res) => {
 app.patch('/api/work-sessions/:id', route(async (req, res) => {
   const session = store.state.workSessions.find(s => s.id === req.params.id);
   if (!session) throw new Error('Working session not found.');
-  if (req.body.title !== undefined) session.title = text(req.body.title, 200);
+  const update = { ...session };
+  if (req.body.title !== undefined) update.title = text(req.body.title, 200);
   if (req.body.notes !== undefined) {
     if (typeof req.body.notes !== 'string' || req.body.notes.length > 12000) throw new Error('Session notes are limited to 12,000 characters.');
-    session.notes = req.body.notes;
+    update.notes = req.body.notes;
   }
   if (req.body.status === 'active') {
     for (const s of store.state.workSessions) if (s.status === 'active') s.status = 'paused';
-    session.status = 'active'; session.endedAt = null;
+    update.status = 'active'; update.endedAt = null;
   } else if (req.body.status === 'wrapped') {
-    session.status = 'wrapped'; session.endedAt = new Date().toISOString(); session.summary = wrapSummary(session);
-  } else if (req.body.status === 'paused') session.status = 'paused';
+    update.status = 'wrapped'; update.endedAt = new Date().toISOString(); update.summary = wrapSummary(update);
+  } else if (req.body.status === 'paused') update.status = 'paused';
+  Object.assign(session, update);
   store.save(); res.json(session);
 }));
 app.post('/api/work-sessions/:id/projects', route(async (req, res) => {
@@ -231,8 +239,8 @@ app.patch('/api/work-sessions/:id/projects/:projectId', route(async (req, res) =
   if (!project) throw new Error('Project not found.');
   const host = req.body.host && req.body.host !== 'local' ? validHost(req.body.host) : 'local';
   if (host !== 'local' && !allowedHosts.includes(host)) throw new Error('This SSH host is not configured.');
-  project.host = host;
-  project.cwd = host === 'local' ? localDirectory(req.body.cwd || home) : text(req.body.cwd || '~', 2000);
+  const cwd = host === 'local' ? localDirectory(req.body.cwd || home) : text(req.body.cwd || '~', 2000);
+  Object.assign(project, { host, cwd });
   store.save(); res.json(project);
 }));
 app.post('/api/work-sessions/:id/goals', route(async (req, res) => {
@@ -248,14 +256,16 @@ app.patch('/api/work-sessions/:id/goals/:goalId', route(async (req, res) => {
   const session = store.state.workSessions.find(s => s.id === req.params.id);
   const goal = session?.projects.flatMap(p => p.goals).find(g => g.id === req.params.goalId);
   if (!goal) throw new Error('Goal not found.');
+  const update = { ...goal };
   if (req.body.status !== undefined) {
     if (!['todo', 'doing', 'done'].includes(req.body.status)) throw new Error('Invalid progress status.');
-    goal.status = req.body.status;
+    update.status = req.body.status;
   }
   if (req.body.notes !== undefined) {
     if (typeof req.body.notes !== 'string' || req.body.notes.length > 6000) throw new Error('Goal notes are limited to 6,000 characters.');
-    goal.notes = req.body.notes;
+    update.notes = req.body.notes;
   }
+  Object.assign(goal, update);
   store.save(); res.json(goal);
 }));
 app.post('/api/teams', route(async (req, res) => {
@@ -289,16 +299,21 @@ app.post('/api/teams/:id/start', route(async (req, res) => {
   if (!Array.isArray(req.body.roles) || req.body.roles.length < 1 || req.body.roles.length > 6) throw new Error('Choose between one and six agents.');
   const roles = req.body.roles.map(r => ({ name: text(r.name, 100), provider: text(r.provider, 20), assignment: typeof r.assignment === 'string' ? r.assignment.slice(0, 4000) : '' }));
   if (roles.some(r => !r.name || !providers.includes(r.provider))) throw new Error('Each agent needs a role and an installed provider.');
-  const existing = await tmuxSessions();
-  if (store.state.sessions.some(s => s.group === team.name && roles.some(r => r.name === s.role) && existing.some(t => t.name === s.tmuxName))) throw new Error('An agent with one of these roles is already running. Give new agents different roles.');
-  const launched = [], errors = [];
-  for (const role of roles) {
-    try {
-      launched.push(await createSession({ provider: role.provider, host: team.host, cwd: team.cwd, group: team.name, title: `${team.name} / ${role.name}`, role: role.name, scope: team.scope,
-        task: `Shared team mission:\n${team.mission}\n\nYour role: ${role.name}.\n${role.assignment}\nUse the platform mailbox to agree on ownership, share progress, and hand off work. Check peers before editing files. Do not spawn extra agents unless the user requests them.` }));
-    } catch (error) { errors.push({ role: role.name, error: error.message }); }
-  }
-  res.json({ launched, errors });
+  if (new Set(roles.map(r => r.name)).size !== roles.length) throw new Error('Give each agent a distinct role.');
+  if (launchingTeams.has(team.id)) throw new Error('This team is already starting agents.');
+  launchingTeams.add(team.id);
+  try {
+    const existing = await tmuxSessions();
+    if (store.state.sessions.some(s => s.group === team.name && roles.some(r => r.name === s.role) && existing.some(t => t.name === s.tmuxName))) throw new Error('An agent with one of these roles is already running. Give new agents different roles.');
+    const launched = [], errors = [];
+    for (const role of roles) {
+      try {
+        launched.push(await createSession({ provider: role.provider, host: team.host, cwd: team.cwd, group: team.name, title: `${team.name} / ${role.name}`, role: role.name, scope: team.scope,
+          task: `Shared team mission:\n${team.mission}\n\nYour role: ${role.name}.\n${role.assignment}\nUse the platform mailbox to agree on ownership, share progress, and hand off work. Check peers before editing files. Do not spawn extra agents unless the user requests them.` }));
+      } catch (error) { errors.push({ role: role.name, error: error.message }); }
+    }
+    res.json({ launched, errors });
+  } finally { launchingTeams.delete(team.id); }
 }));
 function sendMessage(from, to, message, group) {
   if (typeof message !== 'string' || !message.trim() || message.length > 12000) throw new Error('Messages must contain 1–12,000 characters.');
@@ -361,7 +376,7 @@ app.post('/api/coordinator', route(async (req, res) => {
 app.post('/api/coordinator/cancel', (req, res) => { coordinator.cancel(); res.json({ ok: true }); });
 app.post('/api/hosts/scan', route(async (req, res) => {
   const host = validHost(req.body.host);
-  if (!store.state.hosts.includes(host) && !sshAliases().includes(host)) throw new Error('Add this host before connecting.');
+  if (!allowedHosts.includes(host)) throw new Error('This SSH connection is not enabled in your local connections.json.');
   const result = await scanRemote(host);
   remoteCache.set(host, result); res.json(result);
 }));

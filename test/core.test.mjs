@@ -15,7 +15,7 @@ test('shell quoting keeps shell metacharacters literal', async () => {
 });
 test('SSH host validation rejects command and option injection', () => {
   assert.equal(validHost('user@192.0.2.157'), 'user@192.0.2.157');
-  for (const host of ['-oProxyCommand=bad', 'host;bad', 'host\nbad', 'user@host bad', 'host/other', '']) assert.throws(() => validHost(host));
+  for (const host of ['-oProxyCommand=bad', '-Fprivate@host', '-luser@host', 'host;bad', 'host\nbad', 'user@host bad', 'host/other', '']) assert.throws(() => validHost(host));
 });
 test('state persists, and malformed state is not overwritten', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'super-terminal-store-'));

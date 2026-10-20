@@ -7,6 +7,7 @@ import { dataDir, env, which, tmuxRun, ensureContext } from './core.mjs';
 export class Coordinator {
   running = false;
   child = null;
+  cancelled = false;
   store;
   constructor(store) {
     this.store = store;
@@ -23,7 +24,7 @@ export class Coordinator {
     const sessions = live.filter(s => (!group || s.group === group) && (!workSessionId || s.scope?.workSessionId === workSessionId));
     const recent = (await history.all()).filter(s => (!group || s.group === group) && (!workSession || workSession.projects.some(p => s.cwd === p.cwd || s.repository === p.cwd))).slice(0, 8);
     const pieces = [`Captured: ${new Date().toISOString()}. ${sessions.length} visible terminals. Recent conversation coverage: ${recent.length}. This is a bounded snapshot, not complete transcripts.`];
-    pieces.push('Team missions: ' + JSON.stringify((this.store.state.teams || []).filter(t => !group || t.name === group).map(t => ({ name: t.name, mission: t.mission.slice(0, 1500) }))));
+    pieces.push('Team missions: ' + JSON.stringify((this.store.state.teams || []).filter(t => (!group || t.name === group) && (!workSessionId || t.scope?.workSessionId === workSessionId)).map(t => ({ name: t.name, mission: t.mission.slice(0, 1500) }))));
     if (workSession) {
       pieces.unshift('Working session outline: ' + JSON.stringify(workSession).slice(0, 7500));
       const previous = this.store.state.workSessions.filter(s => s.id !== workSessionId && s.status === 'wrapped').at(-1);
@@ -56,9 +57,11 @@ export class Coordinator {
     const bin = which('codex');
     if (!bin) throw new Error('The coordinator needs the Codex CLI and its existing login.');
     this.running = true;
+    this.cancelled = false;
     let entry;
     try {
       const snapshot = await this.snapshot(live, history, group, workSessionId);
+      if (this.cancelled) throw new Error("Coordinator was cancelled before starting.");
       entry = { id: crypto.randomUUID(), prompt, group, workSessionId, createdAt: new Date().toISOString(), status: 'running', snapshotChars: snapshot.length };
       this.store.state.consolidations.push(entry); this.store.save();
       const cwd = path.join(dataDir, 'coordinator');
@@ -82,8 +85,10 @@ export class Coordinator {
         child.on('close', code => {
           clearTimeout(timeout);
           if (code !== 0) return reject(new Error(stderr.trim().slice(-1200) || 'Coordinator was cancelled or timed out.'));
-          const events = json.split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
-          resolve({ answer: fs.readFileSync(outputFile, 'utf8'), usage: events.findLast(e => e.type === 'turn.completed')?.usage || null });
+          try {
+            const events = json.split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
+            resolve({ answer: fs.readFileSync(outputFile, 'utf8'), usage: events.findLast(e => e.type === 'turn.completed')?.usage || null });
+          } catch { reject(new Error('Coordinator finished without a readable answer.')); }
         });
         child.stdin.end(instructions);
       });
@@ -97,5 +102,5 @@ export class Coordinator {
     }
     return entry;
   }
-  cancel() { if (this.child?.pid) { try { process.kill(-this.child.pid, 'SIGTERM'); } catch {} } }
+  cancel() { this.cancelled = true; if (this.child?.pid) { try { process.kill(-this.child.pid, 'SIGTERM'); } catch {} } }
 }

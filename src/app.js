@@ -84,7 +84,7 @@ function renderHome() {
   $('#main').innerHTML = `${header('Workspace', 'All your agents, in one place.', '<span class="privacy-tag"><i class="local-dot"></i> 127.0.0.1</span>')}
   <div class="home-scroll"><div class="home-intro"><div class="eyebrow">READY WHEN YOU ARE</div><h2>Pick up where you left off<span class="accent">.</span></h2><p>Your terminals, conversations, and agent handoffs.<br>Everything stays on this machine until you ask an agent to work.</p></div>
   <div class="launch-grid">${['codex', 'claude', 'grok', 'shell'].map(p => `<button class="launch-card" data-new-provider="${p}">${badge(p)}<span>${providerNames[p]}</span><small>${p === 'shell' ? 'A fresh shell' : 'Your existing CLI & login'}</small><span class="launch-arrow">↗</span><i class="available-dot ${state.providers.find(a => a.id === p)?.available ? '' : 'missing'}"></i></button>`).join('')}</div>
-  <div class="section-title"><h3>Connections</h3><span>Only your two servers</span></div><div class="hosts">
+  <div class="section-title"><h3>Connections</h3><span>Configured SSH connections</span></div><div class="hosts">
   ${state.hosts.map(host => {
     const remote = state.remote.find(r => r.host === host);
     return `<div class="host-card"><div class="host-symbol">⌘</div><div><strong>${esc(hostName(host))}</strong><code>${esc(host)}</code><small>${remote?.error ? 'Unable to scan · connect to check' : remote ? `${remote.processes.length} agent processes · ${state.sessions.filter(s => s.kind === 'remote' && s.host === host).length} tmux panes` : 'Connecting…'}</small></div><div class="host-actions"><button class="text-button" data-scan="${esc(host)}">Scan</button><button class="small-button" data-connect="${esc(host)}">Connect ↗</button></div></div>`;

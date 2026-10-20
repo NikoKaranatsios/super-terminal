@@ -146,4 +146,4 @@ npm run build
 npm test
 ```
 
-Tests exercise real PTY input, resize and reconnection, shell quoting, state persistence, access controls, scoped messaging/progress, team launch, session wrap-up/carry-forward, and browser cookie isolation. Integration tests use temporary storage and a separate tmux server. They do not contact configured SSH servers or make model requests.
+Tests exercise real PTY input, resize and reconnection, shell quoting, state persistence, rejected-update atomicity, access controls, scoped messaging/progress, concurrent team launch, session wrap-up/carry-forward, browser cookie isolation, and launch/cancellation cleanup. Coordinator lifecycle tests use fake executables and never make model calls. Integration tests use temporary storage and a separate tmux server. They do not contact configured SSH servers or make model requests.
