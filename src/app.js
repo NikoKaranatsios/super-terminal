@@ -2,9 +2,15 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
+import './desktop.css';
 import { createWorkUI } from './work.js';
 
 const $ = s => document.querySelector(s);
+if (window.superTerminalDesktop) {
+  document.body.classList.add('desktop');
+  if (window.superTerminalDesktop.platform === 'darwin') document.body.classList.add('desktop-mac');
+  $('.brand-sub').textContent = 'YOUR DESKTOP WORKSPACE';
+}
 const token = $('meta[name="super-terminal-token"]').content;
 let state = null, selected = 'home', mode = 'all', search = '', grouping = 'group', splitId = null, updating = false;
 let draggedSession = null;
@@ -44,7 +50,7 @@ async function refresh(force = false) {
     else if (selected.startsWith('team:')) updateTeamMembers();
     else if (selected === 'work') workUI.overview();
     else if (selected.startsWith('work:')) workUI.update();
-  } catch (e) { $('#connection-state').textContent = 'Offline'; if (!state) $('#main').innerHTML = `<div class="empty-state"><h1>Start your local server</h1><p>${esc(e.message)}</p><code>npm start</code></div>`; }
+  } catch (e) { $('#connection-state').textContent = 'Offline'; if (!state) $('#main').innerHTML = `<div class="empty-state"><h1>${window.superTerminalDesktop ? 'Reconnect to your workspace' : 'Start your local server'}</h1><p>${esc(e.message)}</p><p>${window.superTerminalDesktop ? 'Quit and reopen Super Terminal to reconnect. Your tmux terminals stay running.' : 'Run npm run start:web in the project folder.'}</p></div>`; }
   finally { updating = false; }
 }
 function renderSidebar() {
@@ -410,4 +416,15 @@ document.addEventListener('keydown', event => {
 });
 $('#dialog').addEventListener('click', event => { if (event.target === $('#dialog')) { const b = event.target.getBoundingClientRect(); if (event.clientX < b.left || event.clientX > b.right || event.clientY < b.top || event.clientY > b.bottom) event.target.close(); } });
 await refresh();
+window.superTerminalDesktop?.onAction(async action => {
+  if (!state) return;
+  if ($('#dialog').open) $('#dialog').close();
+  try {
+    if (action === 'new-terminal') newSession();
+    else if (action === 'new-work-session') await workUI.click({dataset:{workNew:'1'}});
+    else if (action === 'new-team') newTeamDialog();
+    else if (action === 'search') $('#search').focus();
+    else if (['home','work','coordinator','messages'].includes(action)) await select(action);
+  } catch (error) { toast(error.message); }
+});
 setInterval(() => refresh(), 8000);

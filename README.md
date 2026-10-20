@@ -1,21 +1,43 @@
 # Super Terminal
 
-A local home for Codex, Claude, Grok, and ordinary terminals. No task board.
+A local desktop home for Codex, Claude, Grok, and ordinary terminals. No task board.
 
-## Run
+## Desktop app
 
-Requirements: macOS or Linux, Node.js 22.13+, Python 3, tmux, and whichever agent CLIs you use. Sign in through those CLIs as usual.
+On macOS, build and install the app once:
 
 ```sh
-brew install tmux            # macOS; use your package manager on Linux
+brew install tmux
 npm install
-npm run build
-npm start
+npm run install:desktop
+open "$HOME/Applications/Super Terminal.app"
 ```
 
-Open **http://127.0.0.1:4317**. On macOS, double-click **Start Super Terminal.command** to build, start, and open the app.
+After installation, open **Super Terminal** from Finder, Spotlight, or the Dock. **Start Super Terminal.command** also opens the installed app and builds it on the first run. No browser tab or separate server terminal is needed.
 
-The server binds exclusively to loopback. Closing the page or restarting the server leaves managed terminals running in a dedicated tmux server. Rebooting the computer ends those processes; agent conversation history remains available.
+The Electron app bundles its own Node runtime and terminal backend. It has a native menu, Dock icon, keyboard shortcuts, a single-instance lock, and remembered window size/position. Its renderer is sandboxed, has no Node integration, and cannot navigate to arbitrary websites or create browser windows. Agent browsers keep their own separate profiles.
+
+The app automatically starts its loopback-only local service and reuses a compatible service already running on the same data folder. All existing data in `~/.super-terminal` is preserved. If an older web version occupies port 4317, stop that Node server once before opening the desktop app. This does not terminate tmux sessions.
+
+- **Close window (⌘W):** on macOS, the app and service keep running. Click its Dock icon to reopen the window.
+- **Quit app (⌘Q):** stops the service it started, including browser processes and an active coordinator request. Managed tmux terminals keep running; mailboxes and browser tools are unavailable until the app opens again.
+- **Reopen:** starts the service and reconnects to the same terminal sessions and work history.
+- **Reboot:** ends running processes; saved sessions, goals, notes, and provider conversation history remain on disk.
+
+Requirements to **run** the installed app: macOS Ventura or newer (or a compatible Linux desktop), Python 3, tmux, and your chosen agent CLIs. Continue using their existing sign-ins. CLI tools may themselves require Node; the packaged Super Terminal service does not require a separate Node installation. Building from source requires Node.js 22.13+ and npm. macOS builds are signed ad hoc for local use; they are not notarized for public distribution.
+
+### Desktop shortcuts
+
+| Shortcut (macOS) | Action |
+| --- | --- |
+| ⌘N | Start a working session |
+| ⇧⌘N | New agent terminal |
+| ⌘K | Find a terminal or conversation |
+| ⌘1 / ⌘2 / ⌘3 | Working sessions / Coordinator / Messages |
+
+For source development, run `npm run dev`. To build without installing, run `npm run package:desktop`; output goes to `release/` for the current OS and architecture. The macOS installer preserves an earlier app bundle as a dated backup and requires it to be closed before updating.
+
+The browser interface remains available for development with `npm run build && npm run start:web` at **http://127.0.0.1:4317**. It is not needed to use the desktop app.
 
 ## What it does
 
@@ -134,6 +156,9 @@ Everything persistent is under `~/.super-terminal/`:
 | `agents/` | Private agent bridge credentials |
 | `context/` | Shared Markdown notes |
 | `browsers/` | Separate browser profiles |
+| `desktop/` | Desktop app preferences and renderer storage |
+| `desktop-window.json` | Window size and position |
+| `desktop-service.log` | Local service diagnostics (rotated on startup) |
 
 These paths are outside the Git repository. Codex, Claude, and Grok keep their own authentication and conversation storage.
 
@@ -144,6 +169,9 @@ Optional environment variables: `PORT` (default 4317), `SUPER_TERMINAL_DATA`, `S
 ```sh
 npm run build
 npm test
+npm run test:desktop
 ```
 
 Tests exercise real PTY input, resize and reconnection, shell quoting, state persistence, access controls, scoped messaging/progress, team launch, session wrap-up/carry-forward, and browser cookie isolation. Integration tests use temporary storage and a separate tmux server. They do not contact configured SSH servers or make model requests.
+
+The desktop runtime check starts the backend under Electron's bundled Node runtime, opens a real PTY, checks service reuse, restarts the service, and verifies that the terminal survived. It uses its own temporary data folder and tmux server.

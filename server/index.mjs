@@ -3,10 +3,10 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import * as pty from 'node-pty';
-import { createStore, home, shell, env, socket, tmux, tmuxRun, which, quote, text, localDirectory, repository, validHost, ensureContext } from './core.mjs';
+import { createStore, dataDir, home, shell, env, socket, tmux, tmuxRun, which, quote, text, localDirectory, repository, validHost, ensureContext } from './core.mjs';
 import { History, publicHistory } from './history.mjs';
 import { tmuxSessions, externalTerminals, sshAliases, scanRemote } from './discovery.mjs';
 import { AgentBrowsers } from './browsers.mjs';
@@ -46,6 +46,10 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '256kb' }));
+app.get('/desktop-health', (req, res) => res.json({
+  product: 'super-terminal', protocol: 1,
+  dataKey: createHash('sha256').update(path.resolve(dataDir)).digest('hex')
+}));
 function authorized(value) {
   return typeof value === 'string' && Buffer.byteLength(value) === Buffer.byteLength(token) && timingSafeEqual(Buffer.from(value), Buffer.from(token));
 }
@@ -453,10 +457,11 @@ server.on('error', error => {
 });
 server.listen(port, '127.0.0.1', () => {
   console.log(`Super Terminal → http://127.0.0.1:${port}\nAgent sessions persist in tmux when this server stops.`);
+  process.parentPort?.postMessage({ type: 'ready', port });
   if (process.env.SUPER_TERMINAL_TEST !== '1') for (const host of allowedHosts) scanRemote(host).then(r => remoteCache.set(host, r)).catch(e => remoteCache.set(host, { host, sessions: [], processes: [], error: e.message.slice(0, 300) }));
 });
 let stopping = false;
-for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => {
+async function stop() {
   if (stopping) return;
   stopping = true;
   const deadline = setTimeout(() => process.exit(0), 4000);
@@ -465,4 +470,6 @@ for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => {
   coordinator.cancel();
   await browsers.close();
   server.close(() => { clearTimeout(deadline); process.exit(0); });
-});
+}
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, stop);
+process.parentPort?.on('message', event => { if (event.data?.type === 'shutdown') stop(); });
