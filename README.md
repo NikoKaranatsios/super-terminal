@@ -2,6 +2,8 @@
 
 A local desktop collection of your terminals, with one Conductor chat. No board or dashboard.
 
+[Implementation status](docs/implementation-status.md) · [Remaining implementation plans](docs/plans/README.md) · [Architecture and operations](docs/README.md) · [Verification](docs/verification.md)
+
 Choose **Local**, **157**, or **Romagnolo 91** from the environment selector. The list refreshes automatically, including Codex, Claude, and Grok processes started outside the app. Click a terminal to use its original CLI; click an external agent to read its matched saved conversation. Provider background services are labelled separately from individual agents.
 
 ## Conductor
@@ -52,9 +54,9 @@ The installed app bundles its own Electron/Node runtime and starts its loopback 
 
 Use **Split Right** or **Split Below** to display up to six panels per window. Click a panel and select an agent from the sidebar. Drag the sidebar or panel dividers to resize; double-click a panel divider to return to equal sizes. Focused dividers also respond to arrow keys. Tab selection and split proportions survive a reload and restore in the main window when reopening. **New Window** in the toolbar opens the selected conversation in a separate desktop window. Closing a tab detaches the screen without stopping its agent.
 
-Completion notifications are on by default. Clicking an alert opens its conversation; **Activity** retains the latest 200 events across all locations. Explicit successful end-of-turn log records trigger “finished a response”; disappearing agent processes trigger a separate “exited” alert. This does not certify that a project or task is complete. Old history and SSH outages do not trigger alerts. Detection uses no AI calls and continues with windows closed while the app runs. Local updates normally arrive within about 20 seconds, remote completions within about a minute plus SSH scan time. Providers without readable completion records can only be detected when the process exits. macOS notification permissions and Focus control banners and sound; Settings includes a test button.
+Completion notifications are on by default. Alerts target their conversation when available; **Activity** retains the latest 200 events across all locations. Explicit successful end-of-turn log records trigger “finished a response”; disappearing agent processes trigger a separate “exited” alert. This does not certify that a project or task is complete. Old history and SSH outages do not trigger alerts. Detection uses periodic process/history scans, makes no AI calls, and continues with windows closed while the app runs. Providers without readable completion records can only be detected when the process exits. macOS notification permissions and Focus control banners and sound; Settings includes a test button. Native banner/click acceptance and unavailable-target handling remain in the [notification plan](docs/plans/desktop-and-notifications.md).
 
-Closing the window keeps the app running on macOS. Quitting stops the local service, browser tools and active Conductor request; tmux terminals survive and reconnect next time. Rebooting ends processes but preserves conversation histories and app data.
+Closing the window keeps the app running on macOS. Quitting stops an app-owned local service, its browser tools and active Conductor request; a separately started compatible service reused by the app is left running. tmux terminals survive service shutdown and can reconnect when the app reopens. Rebooting ends processes but preserves conversation histories and app data.
 
 Runtime requirements: macOS Ventura or later, tmux, Python 3, and the agent CLIs you use, with their existing sign-ins. Building requires Node 22.13+ and npm. The macOS bundle is ad hoc signed for personal use, not notarized for public distribution.
 
@@ -62,7 +64,7 @@ Runtime requirements: macOS Ventura or later, tmux, Python 3, and the agent CLIs
 
 Only destinations in `~/.super-terminal/connections.json` are enabled. The personal installation contains the two requested servers. Hostnames and credentials are not committed. `connections.example.json` shows the format for a fresh installation. SSH uses existing keys and normal host-key verification; ports and jumps belong in `~/.ssh/config`.
 
-Local processes refresh about every 7 seconds; remote processes every 20 seconds; remote history indexes every minute. Failed SSH scans remove stale processes from the live list while retaining cached histories. Zombie processes are excluded. Process existence does not mean an agent is currently doing work.
+Local processes, remote processes, and history indexes refresh independently. Failed SSH scans remove stale processes from the live list while retaining in-memory history metadata; that remote cache does not survive a service restart. Zombie processes are excluded. Process existence does not mean an agent is currently doing work. Discovery is limited to visible processes, supported history formats, and the tmux sockets the readers inspect; see [coverage and remaining work](docs/plans/discovery-and-history.md).
 
 Remote discovery is read-only. If the SSH account already permits passwordless sudo, the reader uses that existing permission to inspect root-owned provider histories and histories belonging to discovered agent accounts. It never enables sudo, requests passwords, or changes permissions. Without that access it reads what the SSH account can access. Root-owned tmux panes can be attached using the same existing sudo permission. Resumed conversations retain their original server user.
 
