@@ -48,7 +48,7 @@ The installed app bundles its own Electron/Node runtime and starts its loopback 
 | ⌘3 | Activity |
 | ⌘, | Settings |
 
-**File → New Agent** starts Codex, Claude, or Grok with default instructions in the selected location. Settings contains text size, completion notifications, the automatic first briefing, and agent startup prompts. The app follows Apple Terminal’s Basic appearance: white background, black Menlo text, gray tabs, and native macOS window chrome. Each agent CLI retains its own formatting.
+**File → New Agent** starts Codex, Claude, or Grok with default instructions in the selected location. Settings contains text size, completion notifications, the automatic first briefing, and agent startup prompts. The app uses a minimal dark terminal appearance: charcoal surfaces, monospace text, flat tabs, and a restrained green accent. Native macOS window chrome follows the dark theme. Each agent CLI retains its own formatting.
 
 Use **Split Right** or **Split Below** to display up to six panels per window. Click a panel and select an agent from the sidebar. Drag the sidebar or panel dividers to resize; double-click a panel divider to return to equal sizes. Focused dividers also respond to arrow keys. Tab selection and split proportions survive a reload and restore in the main window when reopening. **New Window** in the toolbar opens the selected conversation in a separate desktop window. Closing a tab detaches the screen without stopping its agent.
 

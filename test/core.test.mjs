@@ -5,6 +5,28 @@ import os from 'node:os';
 import path from 'node:path';
 import { run, quote, validHost, createStore } from '../server/core.mjs';
 import { readRecords, messagesFromRecords } from '../server/history.mjs';
+import { parseTmuxPanes, terminalTty, externalTerminals } from '../server/discovery.mjs';
+
+test('terminal discovery tolerates diagnostic lines, incomplete panes and missing TTYs', async () => {
+  const output = [
+    'tmux: diagnostic message',
+    '$0\twork\t/tmp\tcodex\t/dev/ttys001\t%1\t0',
+    '$1\tincomplete',
+    '$2\tfinished\t/tmp\t\t\t%3\t1',
+    ''
+  ].join('\n');
+  const panes = parseTmuxPanes(output);
+  assert.equal(panes.length, 2);
+  assert.equal(panes[0].pane, '%1');
+  assert.equal(panes[1].dead, true);
+  assert.equal(terminalTty(undefined), null);
+  assert.equal(terminalTty(null), null);
+  assert.equal(terminalTty(''), null);
+  assert.equal(terminalTty('/dev/ttys001'), 'ttys001');
+  assert.equal(terminalTty('pts/4'), 'pts/4');
+  // This input previously rejected every /api/state request with reading 'replace'.
+  assert.ok(Array.isArray(await externalTerminals([undefined, null, '', '/dev/nonexistent'])));
+});
 
 test('shell quoting keeps shell metacharacters literal', async () => {
   const values = ["a'b", '$(echo BAD)', '`echo BAD`', 'line\nnext', '; touch /tmp/not-allowed'];

@@ -5,14 +5,23 @@ import { run, env, home, tmuxRun, socket, providerOf, repository, validHost, quo
 export async function tmuxSessions(targetSocket = socket) {
   try {
     const { stdout } = await tmuxRun(['list-panes', '-a', '-F', '#{session_id}\t#{session_name}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_tty}\t#{pane_id}\t#{pane_dead}'], targetSocket);
-    return stdout.trim().split('\n').filter(Boolean).map(line => {
-      const [target, name, cwd, command, tty, pane, dead] = line.split('\t');
-      return { target, name, cwd, command, tty, pane, dead: dead === '1', socket: targetSocket };
-    });
+    return parseTmuxPanes(stdout, targetSocket);
   } catch { return []; }
 }
+export function parseTmuxPanes(stdout, targetSocket = socket) {
+  return String(stdout || '').split('\n').flatMap(line => {
+    const fields = line.replace(/\r$/, '').split('\t');
+    if (fields.length !== 7) return [];
+    const [target, name, cwd, command, tty, pane, dead] = fields;
+    if (!/^\$\d+$/.test(target) || !/^%\d+$/.test(pane) || !name || !['0','1'].includes(dead)) return [];
+    return [{ target, name, cwd, command, tty, pane, dead: dead === '1', socket: targetSocket }];
+  });
+}
+export function terminalTty(value) {
+  return typeof value === 'string' && value.trim() ? value.trim().replace(/^\/dev\//, '') : null;
+}
 export async function externalTerminals(excludeTtys = []) {
-  const excluded = new Set(excludeTtys.map(t => t.replace('/dev/', '')));
+  const excluded = new Set(excludeTtys.map(terminalTty).filter(Boolean));
   let stdout;
   try { ({ stdout } = await run('ps', ['-axo', 'pid=,ppid=,tty=,stat=,comm='], { timeout: 3000 })); } catch { return []; }
   const byTty = new Map();
@@ -73,7 +82,8 @@ export async function scanRemote(host, includeHistory = false) {
   const data = await remoteRead(host, includeHistory ? 'index' : 'scan');
   const processes = data.processes;
   const sessions = data.panes.filter(p => !p.dead).map(p => {
-    const process = processes.find(a => a.tty === p.tty.replace('/dev/', ''));
+    const tty = terminalTty(p.tty);
+    const process = tty ? processes.find(a => terminalTty(a.tty) === tty) : null;
     return { ...p, id: `remote:${host}:${p.owner}:${p.pane}`, kind: 'remote', host, provider: process?.provider || providerOf(p.command), group: path.posix.basename(p.cwd), status: process?.status === 'paused' ? 'paused' : 'running', files: process?.files || [], pid: process?.pid };
   });
   return { host, elevatedRead: data.elevatedRead, sessions, processes: processes.filter(p => !sessions.some(s => s.pid === p.pid)).map(p => ({

@@ -103,7 +103,7 @@ async function createWindow(context = {}) {
   if (!backend || quitting) return;
   const window = new BrowserWindow({
     width: 1440, height: 960, minWidth: 800, minHeight: 500, ...readBounds(),
-    title: 'Super Terminal', backgroundColor: '#ffffff', show: false,
+    title: 'Super Terminal', backgroundColor: '#101214', show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true,
       sandbox: true, webSecurity: true, webviewTag: false, navigateOnDragDrop: false, spellcheck: false
@@ -141,7 +141,7 @@ app.on('before-quit', event => {
   Promise.resolve(backend?.stop()).finally(() => { allowQuit = true; app.quit(); });
 });
 if (primary) app.whenReady().then(async () => {
-  nativeTheme.themeSource = 'light';
+  nativeTheme.themeSource = 'dark';
   app.setAboutPanelOptions({ applicationName: 'Super Terminal', applicationVersion: app.getVersion(), copyright: 'Local agent workspace' });
   try {
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('PORT must be an integer between 1024 and 65535.');

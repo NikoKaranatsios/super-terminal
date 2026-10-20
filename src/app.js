@@ -12,8 +12,8 @@ const initial = new URLSearchParams(location.hash.slice(1));
 const workspaceKey = 'workspace:'+(initial.get('window') || 'main');
 const layout = new Workspace(localStorage.getItem(workspaceKey));
 if(initial.get('environment')) environment=initial.get('environment');
-let restoring=false;
-const terminalTheme={background:'#ffffff',foreground:'#000000',cursor:'#000000',selectionBackground:'#b5d5ff',black:'#000000',red:'#990000',green:'#008000',yellow:'#999900',blue:'#0000b2',magenta:'#b200b2',cyan:'#008b8b',white:'#bfbfbf',brightBlack:'#666666',brightRed:'#e50000',brightGreen:'#00a600',brightYellow:'#b5a000',brightBlue:'#0000ff',brightMagenta:'#e500e5',brightCyan:'#00a6a6',brightWhite:'#ffffff'};
+let restoring=false, workspaceReady=false;
+const terminalTheme={background:'#101214',foreground:'#d8dfda',cursor:'#96d9a9',cursorAccent:'#101214',selectionBackground:'#345143',black:'#171b1e',red:'#e78989',green:'#96d9a9',yellow:'#dfc68f',blue:'#90b5e3',magenta:'#c6a0d8',cyan:'#87c9c2',white:'#d8dfda',brightBlack:'#818b85',brightRed:'#f2a0a0',brightGreen:'#b0ecc0',brightYellow:'#f0d9a4',brightBlue:'#b0cef4',brightMagenta:'#dfb7ee',brightCyan:'#abe1da',brightWhite:'#f3f7f4'};
 function saveWorkspace(){localStorage.setItem(workspaceKey,layout.serialize());}
 function tabLabel(id){const s=[...(state?.sessions||[]),...(state?.history||[])].find(s=>s.id===id);return id==='conductor'?'Conductor':id==='settings'?'Settings':id==='activity'?'Activity':id.startsWith('messages:')?id.slice(9)||'Team messages':s?.role || s?.title || views.get(id)?.title || 'Terminal';}
 function focusPane(paneId){const pane=layout.focus(paneId);selected=pane.active || '';for(const el of document.querySelectorAll('.pane'))el.classList.toggle('focused',el.dataset.pane===paneId);document.title=(tabLabel(selected)||'Super Terminal')+' — Super Terminal';if(state)sidebar();saveWorkspace();}
@@ -58,13 +58,14 @@ function assessment(s) { const a = state.coordinator.assessments[s.id]; return a
 function row(s, history = false) {
   const a = history ? assessment(s) : null;
   const linkedTitle = state.history.find(h=>h.id===s.historyId)?.title;
-  const name = s.role || linkedTitle || (s.kind === 'managed' ? s.title.replace(new RegExp('^'+s.provider+' · '),'') : '') || s.cwd?.split('/').filter(Boolean).at(-1) || (s.tty && !['?','??'].includes(s.tty) ? s.tty : 'PID '+s.pid);
+  const name = s.role || linkedTitle || (s.kind === 'managed' ? String(s.title || '').replace(new RegExp('^'+s.provider+' · '),'') : '') || s.cwd?.split('/').filter(Boolean).at(-1) || (s.tty && !['?','??'].includes(s.tty) ? s.tty : 'PID '+s.pid);
   const title = history ? s.title : `${s.provider === 'shell' ? 'terminal' : s.provider}${s.runtime ? ' service' : ''} · ${name}`;
   const sub = history ? `${a?.status || 'unreviewed'} · ${s.provider}` : `${s.connectionLost ? 'SSH ended · local shell' : s.status === 'paused' ? 'paused' : s.runtime ? 'background runtime' : s.kind === 'external' ? 'external' : 'terminal'}${s.runtime ? ' · PID '+s.pid : s.tty ? ' · '+s.tty.replace('/dev/','') : ''}${state.teams.some(t=>t.name===s.group) ? ' · '+s.group : ''}`;
-  return `<button class="agent${selected === s.id ? ' selected' : ''}" data-id="${escape(s.id)}" title="${escape(a?.summary || s.title+'\n'+s.cwd)}"><span class="label">${history ? '' : '<span class="dot">●</span>'}${escape(title)}</span><small>${escape(sub)}</small></button>`;
+  return `<button class="agent${selected === s.id ? ' selected' : ''}${s.runtime ? ' runtime' : ''}${s.status==='paused' ? ' paused' : ''}" data-id="${escape(s.id)}" title="${escape(a?.summary || [s.title,s.cwd].filter(Boolean).join('\n'))}"><span class="label">${history ? '' : '<span class="dot">●</span>'}${escape(title)}</span><small>${escape(sub)}</small></button>`;
 }
 function replaceMarkup(selector, markup) { const el=$(selector); if(el._markup !== markup) { el.innerHTML=markup; el._markup=markup; } }
 function sidebar() {
+  if(!state)return;
   const selector = $('#environment'), signature = JSON.stringify(state.hosts);
   if (selector.dataset.hosts !== signature) {
     selector.innerHTML = ['local',...state.hosts].map(h => `<option value="${escape(h)}">${escape(hostName(h))}</option>`).join('');
@@ -72,9 +73,9 @@ function sidebar() {
     if (!['local',...state.hosts].includes(environment)) environment = 'local';
   }
   selector.value = environment;
-  const live = state.sessions.filter(s => s.host === environment && ['running','external','paused'].includes(s.status));
+  const live = state.sessions.filter(s => s.host === environment && ['running','external','paused'].includes(s.status)).sort((a,b)=>Number(!!a.runtime)-Number(!!b.runtime));
   const remote = state.remote.find(r => r.host === environment);
-  $('#environment-status').textContent = remote?.error ? 'SSH unavailable · retrying' : remote?.scanning && !remote.scannedAt ? 'Connecting…' : `${live.filter(s=>s.status!=='paused').length} running${live.some(s=>s.status==='paused') ? ' · '+live.filter(s=>s.status==='paused').length+' paused' : ''}`;
+  $('#environment-status').textContent = remote?.error ? 'SSH unavailable · retrying' : remote?.scanning && !remote.scannedAt ? 'Connecting…' : `${live.filter(s=>!s.runtime&&s.status!=='paused').length} running${live.some(s=>s.status==='paused') ? ' · '+live.filter(s=>s.status==='paused').length+' paused' : ''}${live.some(s=>s.runtime) ? ' · '+live.filter(s=>s.runtime).length+' services' : ''}`;
   $('#environment-status').title = remote?.error || (remote?.scannedAt ? `Last checked ${new Date(remote.scannedAt).toLocaleTimeString()}` : '');
   replaceMarkup('#terminals', live.map(s => row(s)).join('') || '<div class="empty">No running terminals here.</div>');
   const rank = { open:0, uncertain:1, unreviewed:2, completed:3, stale:4 };
@@ -110,7 +111,7 @@ function chat() {
   activate('conductor','Conductor'); renderChat(); $('#chat-input').focus();
 }
 function renderChat() {
-  if (!$('#chat-output')) return;
+  if (!state || !$('#chat-output')) return;
   const status = state.coordinator, output = $('#chat-output');
   const signature = JSON.stringify(status.history);
   if (output.dataset.signature !== signature) {
@@ -119,7 +120,8 @@ function renderChat() {
     output.dataset.signature = signature; if (nearBottom) output.scrollTop = output.scrollHeight;
   }
   const reviewed = state.history.filter(s => assessment(s)).length;
-  $('#chat-progress').textContent = status.running ? 'Reading history and preparing a reply…' : `${reviewed} / ${state.history.length} conversations reviewed · cached between replies`;
+  $('#chat-progress').textContent = status.running ? 'Reading history and preparing a reply…' : `${reviewed} / ${state.history.length} reviewed`;
+  $('#chat-progress').title = 'History assessments are cached. Further reviews run only when you ask.';
   $('#send-chat').disabled = status.running; $('#review-next').disabled = status.running; $('#stop-chat').hidden = !status.running;
 }
 async function sendChat(prompt, automatic = false) {
@@ -237,7 +239,11 @@ async function newTerminal(provider = 'shell') {
 async function refresh() {
   if(refreshing) return; refreshing=true;
   try {
-    state = await api('/state'); sidebar(); renderChat();document.documentElement.style.setProperty('--text-size',state.preferences.fontSize+'px');
+    state = await api('/state');
+    document.querySelectorAll('[data-requires-state]').forEach(el=>el.disabled=false);
+    sidebar();
+    if(!workspaceReady)await restoreWorkspace();
+    renderChat();document.documentElement.style.setProperty('--text-size',state.preferences.fontSize+'px');
     for(const [id,v] of views)if(v.pending&&[...state.sessions,...state.history].some(s=>s.id===id)){v.element.remove();views.delete(id);const before=restoring,hostBefore=environment;restoring=true;await open(id);restoring=before;environment=hostBefore;localStorage.setItem('environment',environment);renderWorkspace();sidebar();}
     for(const v of views.values())if(v.term&&v.term.options.fontSize!==state.preferences.fontSize){v.term.options.fontSize=state.preferences.fontSize;v.resize();}
     for(const pane of layout.panes()){const active=views.get(pane.active);if(pane.active?.startsWith('messages:'))renderMessages(pane.active.slice(9));if(active?.source){active.source=state.sessions.find(s=>s.id===pane.active)||active.source;updateConversation(active);}}
@@ -245,7 +251,7 @@ async function refresh() {
     if(!bootBriefing && state.preferences.automaticBriefing && !state.coordinator.history.length && state.remote.every(r=>r.scannedAt || r.error) && !state.coordinator.running) {
       bootBriefing=true; sendChat('Read recent saved agent conversations across all environments. Tell me what still looks open, what appears finished, and ask what I want to focus on. Do not assume old work is still a priority.',true);
     }
-  } catch(e) { notice(e.message); } finally { refreshing=false; }
+  } catch(e) { notice(e.message);if(!state)$('#environment-status').textContent='Reconnecting…'; } finally { refreshing=false; }
 }
 $('#environment').onchange = e => {
   environment=e.target.value; localStorage.setItem('environment',environment); sidebar();
@@ -255,6 +261,7 @@ $('#environment').onchange = e => {
 $('#conductor-nav').onclick=chat; $('#team-messages-nav').onclick=()=>messages(''); $('#settings-nav').onclick=settings;
 document.addEventListener('click',e=>{const button=e.target.closest('[data-id]'); if(button) open(button.dataset.id); const team=e.target.closest('[data-team]'); if(team) messages(team.dataset.team);});
 window.superTerminalDesktop?.onAction(action=>{
+  if(!state){notice('Connecting to the local service…');return;}
   if(action==='conductor' || action==='coordinator') chat();
   if(action==='settings') settings();
   if(action==='new-terminal') newTerminal();
@@ -271,13 +278,15 @@ window.superTerminalDesktop?.onAction(action=>{
 document.addEventListener('pointerdown',e=>{const pane=e.target.closest('[data-pane]');if(pane&&pane.dataset.pane!==layout.activePane)focusPane(pane.dataset.pane);});
 document.addEventListener('click',e=>{const split=e.target.closest('[data-layout]');if(split)splitPanel(split.dataset.layout);const tab=e.target.closest('[data-tab]');if(tab){layout.open(tab.dataset.tab);renderWorkspace();focusPane(layout.activePane);views.get(selected)?.term?.focus();}const close=e.target.closest('[data-close]');if(close)closeTab(close.dataset.close);const empty=e.target.closest('[data-close-panel]');if(empty){layout.removeEmpty(empty.dataset.closePanel);renderWorkspace();focusPane(layout.activePane);}const add=e.target.closest('[data-add-tab]');if(add){focusPane(add.dataset.addTab);newTerminal();}});
 $('#new-window').onclick=openWindow;$('#notifications-nav').onclick=activity;
-installDividers();renderWorkspace();
-await refresh();
-if(state){
+async function restoreWorkspace(){
+  workspaceReady=true;
   const savedTabs=layout.panes().flatMap(p=>p.tabs),savedEnvironment=environment;restoring=true;
   for(const id of savedTabs){if(id==='conductor')chat();else if(id==='settings')settings();else if(id==='activity')activity();else if(id.startsWith('messages:'))await messages(id.slice(9));else await open(id);}
   restoring=false;environment=savedEnvironment;localStorage.setItem('environment',environment);renderWorkspace();focusPane(layout.activePane);
   if(initial.get('view')){const id=initial.get('view');if(id==='conductor')chat();else if(id==='settings')settings();else if(id==='activity')activity();else if(id.startsWith('messages:'))messages(id.slice(9));else await open(id);}
   if(!savedTabs.length&&!initial.get('view')){chat();await splitPanel('row');chat();}
 }
+installDividers();renderWorkspace();
+document.querySelectorAll('[data-requires-state]').forEach(el=>el.disabled=true);
+await refresh();
 setInterval(refresh,5000);

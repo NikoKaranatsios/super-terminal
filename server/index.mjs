@@ -487,6 +487,7 @@ wss.on('connection', async (ws, url) => {
   ws.on('error', cleanup);
 });
 app.use((err, req, res, next) => {
+  if (err instanceof TypeError) console.error(`${req.method} ${req.path}: ${err.stack}`);
   const message = err.code === 'ENOENT' ? 'Working directory or command was not found.' : err.message;
   res.status(400).json({ error: message?.slice(0, 1500) || 'Something went wrong.' });
 });
