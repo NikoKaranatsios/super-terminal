@@ -7,9 +7,10 @@ import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypt
 import { WebSocketServer } from 'ws';
 import * as pty from 'node-pty';
 import { createStore, dataDir, home, shell, env, socket, tmux, tmuxRun, which, quote, text, localDirectory, repository, validHost, ensureContext } from './core.mjs';
-import { History, publicHistory } from './history.mjs';
-import { tmuxSessions, externalTerminals, sshAliases, scanRemote } from './discovery.mjs';
+import { History, EnvironmentHistory, publicHistory, matchHistory } from './history.mjs';
+import { tmuxSessions, externalTerminals, scanRemote, remoteRead } from './discovery.mjs';
 import { AgentBrowsers } from './browsers.mjs';
+import { performAction } from './conductor-actions.mjs';
 import { Coordinator } from './coordinator.mjs';
 import { allowedHosts, connections, defaultPrompt, prepareBridge, startupPrompt, publicSession } from './agent-platform.mjs';
 import { parseTopics, workProgress, resolveScope, scopeContext, canCommunicate, carryProjects, mergeProjects, wrapSummary } from './work-sessions.mjs';
@@ -23,13 +24,18 @@ const store = createStore();
 store.state.hosts = [...allowedHosts];
 store.state.messages ||= [];
 store.state.teams ||= [];
+store.state.projects ||= [];
+store.state.lifecycle ||= {};
 store.state.workSessions ||= [];
 store.state.prompts ||= Object.fromEntries(['codex', 'claude', 'grok'].map(p => [p, defaultPrompt]));
 store.save();
-const history = new History();
+const remoteCache = new Map();
+const history = new EnvironmentHistory(new History(), remoteCache, remoteRead);
+store.state.preferences ||= { fontSize: 13, automaticBriefing: true };
 const browsers = new AgentBrowsers();
 const coordinator = new Coordinator(store);
-const remoteCache = new Map();
+coordinator.liveReader = liveSessions;
+coordinator.actionHandler = action => performAction(action, { store, liveSessions, createSession, allowedHosts, sendMessage, history, invalidate: () => { externalTime = 0; for(const host of allowedHosts) refreshRemote(host); } });
 const attachments = new Set();
 const providers = ['codex', 'claude', 'grok', 'shell'];
 const app = express();
@@ -69,37 +75,42 @@ async function liveSessions() {
   const [own, defaults] = await Promise.all([tmuxSessions(), tmuxSessions(null)]);
   const live = store.state.sessions.map(s => {
     const pane = own.find(t => t.name === s.tmuxName);
-    return { ...publicSession(s), status: pane ? (pane.dead ? 'exited' : 'running') : 'stopped', command: pane?.command, tty: pane?.tty };
+    const connectionLost = s.host !== 'local' && pane && pane.command !== 'ssh';
+    const remotePane = remoteCache.get(s.host)?.sessions.find(t => t.title === s.tmuxName);
+    return { ...publicSession(s), connectionLost: !!connectionLost, status: pane ? (pane.dead ? 'exited' : connectionLost ? 'disconnected' : 'running') : 'stopped', command: pane?.command, tty: pane?.tty, provider: s.host === 'local' || connectionLost ? (['codex','claude','grok'].includes(pane?.command) ? pane.command : 'shell') : remotePane?.provider || s.provider };
   });
   const imported = defaults.map(t => ({
     id: `tmux:${t.pane}`, kind: 'tmux', provider: ['codex', 'claude', 'grok'].includes(t.command) ? t.command : 'shell',
     title: `${t.name} · ${t.pane}`, cwd: t.cwd, host: 'local', group: path.basename(repository(t.cwd) || t.cwd) || 'Loose sessions',
-    target: t.target, pane: t.pane, status: t.dead ? 'exited' : 'running'
+    target: t.target, pane: t.pane, tty: t.tty, status: t.dead ? 'exited' : 'running'
   }));
   if (Date.now() - externalTime > 7000) {
     externalCache = await externalTerminals([...own, ...defaults].map(t => t.tty));
     externalTime = Date.now();
   }
   const remote = [...remoteCache.values()].flatMap(r => [
-    ...r.sessions.filter(p => !live.some(s => s.host === p.host && s.tmuxName === p.title && s.status === 'running')),
+    ...r.sessions.filter(p => !live.some(s => s.host === p.host && s.tmuxName === p.title && ['running','paused'].includes(s.status) && !s.connectionLost)),
     ...r.processes
   ]);
-  return [...live, ...imported, ...externalCache, ...remote];
+  const rows = await history.all();
+  return [...live, ...imported, ...externalCache, ...remote].map(s => { const { files, ...publicRow } = s; return { ...publicRow, ...store.state.assignments?.[s.id], status: s.kind !== 'external' && store.state.lifecycle[s.id] === 'paused' && ['running','external','paused'].includes(s.status) ? 'paused' : s.status, historyId: matchHistory(s, rows), linkedHistory: rows.filter(r => r.host === s.host && r.provider === s.provider && s.files?.includes(r.file)).map(r => r.id), historyMatch: s.resumeId || s.files?.length || s.historyId ? 'file-or-id' : 'start-time' };  });
 }
 app.get('/api/state', route(async (req, res) => {
   const [sessions, conversations] = await Promise.all([liveSessions(), history.all(req.query.refresh === '1')]);
   res.json({
     sessions, history: conversations.map(publicHistory), hosts: store.state.hosts, hostNames: Object.fromEntries(connections.map(c => [c.target, c.name])),
-    remote: [...remoteCache.values()].map(({ sessions, ...r }) => r),
+    remote: allowedHosts.map(host => { const r = remoteCache.get(host); return { host, scannedAt: r?.scannedAt, error: r?.error, scanning: scanTasks.has(host), historyCount: r?.history?.length || 0, elevatedRead: r?.elevatedRead || false }; }),
+    preferences: store.state.preferences,
     home, defaultCwd: path.join(home, 'Projects'), prompts: store.state.prompts,
     coordinator: coordinator.status(), messages: store.state.messages.slice(-100),
-    teams: store.state.teams,
+    teams: store.state.teams, projects: store.state.projects,
     workSessions: store.state.workSessions.map(s => ({ ...s, progress: workProgress(s) })),
     browsers: [...browsers.contexts.keys()],
     providers: providers.map(id => ({ id, available: id === 'shell' || !!which(id) })),
     tmuxAvailable: !!tmux, warnings: history.warnings
   });
 }));
+app.get('/api/messages', (req, res) => res.json(store.state.messages.filter(m => !req.query.group || m.group === req.query.group)));
 app.get('/api/history/:id', route(async (req, res) => res.json(await history.transcript(req.params.id))));
 
 async function createSession(body) {
@@ -112,16 +123,16 @@ async function createSession(body) {
     const previous = store.state.sessions.find(s => s.historyId === original.id);
     if (previous && (await tmuxSessions()).some(t => t.name === previous.tmuxName)) return publicSession(previous);
   }
-  const host = body.host && body.host !== 'local' ? validHost(body.host) : 'local';
+  const host = original?.host || (body.host && body.host !== 'local' ? validHost(body.host) : 'local');
   if (host !== 'local' && !allowedHosts.includes(host)) throw new Error('This SSH connection is not enabled in your local connections.json.');
-  if (original && host !== 'local') throw new Error('Local conversations must be resumed locally.');
-  const cwd = host === 'local' ? localDirectory(body.cwd || original?.cwd || home) : text(body.cwd || '~', 2000);
+  if (original && body.host && body.host !== original.host) throw new Error('Resume a conversation in its original environment.');
+  const cwd = host === 'local' ? localDirectory(body.cwd || original?.cwd || home) : text(body.cwd || original?.cwd || '~', 2000);
   const repo = host === 'local' ? repository(cwd) : null;
   const group = text(body.group || original?.group || path.basename(repo || cwd) || 'Loose sessions', 120);
   const title = text(body.title || original?.title || `${provider === 'shell' ? 'Terminal' : provider} · ${path.basename(cwd)}`, 200);
   const id = randomUUID();
   const tmuxName = `st-${id.slice(0, 12)}`;
-  const session = { id, kind: 'managed', provider, host, cwd, group, title, role: text(body.role || '', 100), tmuxName, historyId: original?.id || null, createdAt: new Date().toISOString(), status: 'running', agentToken: randomBytes(32).toString('hex') };
+  const session = { id, remoteUser: host !== 'local' ? original?.owner || null : null, projectId: store.state.projects.some(p => p.id === body.projectId) ? body.projectId : null, kind: 'managed', provider, host, cwd, group, title, role: text(body.role || '', 100), tmuxName, historyId: original?.id || null, createdAt: new Date().toISOString(), status: 'running', agentToken: randomBytes(32).toString('hex') };
   session.scope = resolveScope(store.state.workSessions, body.scope);
   const bridge = await prepareBridge(session, root, port);
   const team = store.state.teams.find(t => t.name === group);
@@ -137,9 +148,11 @@ async function createSession(body) {
     command = [bin, ...args].map(quote).join(' ');
   } else {
     const dir = cwd === '~' ? '"$HOME"' : cwd.startsWith('~/') ? `"$HOME"/${quote(cwd.slice(2))}` : quote(cwd);
-    const agentCommand = provider === 'shell' ? 'exec "${SHELL:-/bin/sh}" -l' : `exec ${quote(provider)} ${quote(prompt)}`;
+    const resumeArgs = original ? (provider === 'codex' ? ['resume', original.sessionId, prompt] : ['--resume', original.sessionId, prompt]) : [prompt];
+    const agentCommand = provider === 'shell' ? 'exec "${SHELL:-/bin/sh}" -l' : `exec ${[provider, ...resumeArgs].map(quote).join(' ')}`;
     const remoteCommand = `export SUPER_TERMINAL_AGENT_CONFIG=${quote(bridge.configPath)}; exec "\${SHELL:-/bin/sh}" -lc ${quote(agentCommand)}`;
-    const remoteScript = `cd ${dir} || exit; if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s ${quote(tmuxName)} ${quote(remoteCommand)}; else ${remoteCommand}; fi`;
+    const remoteScriptBody = `cd ${dir} || exit; if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s ${quote(tmuxName)} ${quote(remoteCommand)}; else ${remoteCommand}; fi`;
+    const remoteScript = session.remoteUser ? `sudo -n -u ${quote(session.remoteUser)} sh -lc ${quote(remoteScriptBody)}` : remoteScriptBody;
     command = ['ssh', '-tt', '-o', 'ConnectTimeout=10', ...bridge.sshArgs, host, remoteScript].map(quote).join(' ');
     if (!store.state.hosts.includes(host)) store.state.hosts.push(host);
   }
@@ -360,14 +373,34 @@ app.post('/api/coordinator', route(async (req, res) => {
   const workSessionId = req.body.workSessionId ? text(req.body.workSessionId, 80) : '';
   if (workSessionId && !store.state.workSessions.some(s => s.id === workSessionId)) throw new Error('Working session not found.');
   const live = await liveSessions();
-  res.json(await coordinator.ask(req.body.prompt, group, live, history, workSessionId));
+  res.json(await coordinator.ask(req.body.prompt, group, live, history, workSessionId, req.body.automatic === true, req.body.environment === 'local' || allowedHosts.includes(req.body.environment) ? req.body.environment : 'local'));
 }));
 app.post('/api/coordinator/cancel', (req, res) => { coordinator.cancel(); res.json({ ok: true }); });
-app.post('/api/hosts/scan', route(async (req, res) => {
-  const host = validHost(req.body.host);
-  if (!store.state.hosts.includes(host) && !sshAliases().includes(host)) throw new Error('Add this host before connecting.');
-  const result = await scanRemote(host);
-  remoteCache.set(host, result); res.json(result);
+const scanTasks = new Map();
+async function refreshRemote(host, forceIndex = false) {
+  if (!allowedHosts.includes(host)) throw new Error('This SSH connection is not enabled.');
+  if (scanTasks.has(host)) return scanTasks.get(host);
+  const previous = remoteCache.get(host);
+  const withIndex = forceIndex || !previous?.indexedAt || Date.now() - previous.indexedAt > 60000;
+  const task = scanRemote(host, withIndex).then(result => {
+    remoteCache.set(host, { ...result, history: result.history || previous?.history || [], indexedAt: withIndex ? Date.now() : previous?.indexedAt });
+    return { host, scannedAt: result.scannedAt };
+  }).catch(error => {
+    // Retain history, but never show an unreachable host's old processes as currently running.
+    remoteCache.set(host, { host, sessions: [], processes: [], history: previous?.history || [], indexedAt: previous?.indexedAt, scannedAt: previous?.scannedAt, error: error.message.slice(0, 300) });
+    return { host, error: error.message };
+  }).finally(() => scanTasks.delete(host));
+  scanTasks.set(host, task); return task;
+}
+app.post('/api/hosts/scan', route(async (req, res) => res.json(await refreshRemote(validHost(req.body.host), true))));
+app.put('/api/preferences', route(async (req, res) => {
+  if (req.body.fontSize !== undefined) {
+    const size = Number(req.body.fontSize);
+    if (!Number.isInteger(size) || size < 10 || size > 22) throw new Error('Text size must be between 10 and 22.');
+    store.state.preferences.fontSize = size;
+  }
+  if (typeof req.body.automaticBriefing === 'boolean') store.state.preferences.automaticBriefing = req.body.automaticBriefing;
+  store.save(); res.json(store.state.preferences);
 }));
 app.get('/api/context', route(async (req, res) => {
   const group = text(req.query.group, 120);
@@ -412,7 +445,8 @@ wss.on('connection', async (ws, url) => {
       const remote = [...remoteCache.values()].flatMap(r => r.sessions).find(r => r.id === id);
       if (!remote) throw new Error('Terminal not found. Refresh the sidebar.');
       bin = which('ssh');
-      args = ['-tt', '-o', 'ConnectTimeout=10', remote.host, `tmux select-window -t ${quote(remote.pane)}; tmux select-pane -t ${quote(remote.pane)}; exec tmux attach-session -t ${quote(remote.target)}`];
+      const remoteTmux = remote.requiresSudo ? `sudo -n -u ${quote(remote.owner)} tmux` : 'tmux';
+      args = ['-tt', '-o', 'ConnectTimeout=10', remote.host, `${remoteTmux} select-window -t ${quote(remote.pane)}; ${remoteTmux} select-pane -t ${quote(remote.pane)}; exec ${remoteTmux} attach-session -t ${quote(remote.target)}`];
     }
     if (ws.readyState !== 1) return;
     terminal = pty.spawn(bin, args, { name: 'xterm-256color', cols: 120, rows: 35, cwd: home, env: { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor' } });
@@ -458,7 +492,11 @@ server.on('error', error => {
 server.listen(port, '127.0.0.1', () => {
   console.log(`Super Terminal → http://127.0.0.1:${port}\nAgent sessions persist in tmux when this server stops.`);
   process.parentPort?.postMessage({ type: 'ready', port });
-  if (process.env.SUPER_TERMINAL_TEST !== '1') for (const host of allowedHosts) scanRemote(host).then(r => remoteCache.set(host, r)).catch(e => remoteCache.set(host, { host, sessions: [], processes: [], error: e.message.slice(0, 300) }));
+  if (process.env.SUPER_TERMINAL_TEST !== '1') {
+    for (const host of allowedHosts) refreshRemote(host);
+    const scanTimer = setInterval(() => { if (!stopping) for (const host of allowedHosts) refreshRemote(host); }, 20000);
+    scanTimer.unref();
+  }
 });
 let stopping = false;
 async function stop() {

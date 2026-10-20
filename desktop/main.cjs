@@ -49,27 +49,23 @@ function sendAction(action) {
 function setMenu() {
   const isMac = process.platform === 'darwin';
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    ...(isMac ? [{ role: 'appMenu' }] : []),
+    ...(isMac ? [{ label: 'Super Terminal', submenu: [{ role: 'about' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => sendAction('settings') }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] }] : []),
     { label: 'File', submenu: [
-      { label: 'New Terminal', accelerator: 'CmdOrCtrl+Shift+N', click: () => sendAction('new-terminal') },
-      { label: 'Start Working Session', accelerator: 'CmdOrCtrl+N', click: () => sendAction('new-work-session') },
-      { label: 'Create Team', click: () => sendAction('new-team') },
+      { label: 'New Terminal', accelerator: 'CmdOrCtrl+N', click: () => sendAction('new-terminal') },
+      { label: 'New Agent', submenu: ['codex', 'claude', 'grok'].map(provider => ({ label: provider, click: () => sendAction('new-agent:' + provider) })) },
       { type: 'separator' }, { role: isMac ? 'close' : 'quit' }
     ] },
     { role: 'editMenu' },
     { label: 'View', submenu: [
-      { label: 'Workspace', click: () => sendAction('home') },
-      { label: 'Working Sessions', accelerator: 'CmdOrCtrl+1', click: () => sendAction('work') },
-      { label: 'Coordinator', accelerator: 'CmdOrCtrl+2', click: () => sendAction('coordinator') },
-      { label: 'Agent Messages', accelerator: 'CmdOrCtrl+3', click: () => sendAction('messages') },
-      { label: 'Find Terminal or Conversation', accelerator: 'CmdOrCtrl+K', click: () => sendAction('search') },
+      { label: 'Conductor', accelerator: 'CmdOrCtrl+1', click: () => sendAction('conductor') },
+      { label: 'Select Environment', accelerator: 'CmdOrCtrl+2', click: () => sendAction('environment') },
       { type: 'separator' }, { role: 'reload' }, { role: 'toggleDevTools' },
       { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }
     ] },
     { role: 'windowMenu' },
-    { label: 'Help', submenu: [{ label: 'About Your Local Workspace', click: () => dialog.showMessageBox(window, {
-      type: 'info', title: 'Super Terminal', message: 'Your agents, in one desktop workspace.',
-      detail: 'Start a working session, enter your topics, and assign agents to sessions, projects, or goals.\n\nClosing the window keeps the app and mailboxes running. Quitting stops the local service; tmux terminals survive and reconnect next time.\n\nAll settings and work stay in ~/.super-terminal. AI requests use your existing agent CLI accounts.'
+    { label: 'Help', submenu: [{ label: 'Using Super Terminal', click: () => dialog.showMessageBox(window, {
+      type: 'info', title: 'Super Terminal', message: 'Your terminals and Conductor.',
+      detail: 'Choose an environment, then select a terminal. New terminals and agents open in the selected environment. Conductor reads saved conversations across all three locations.\n\nClosing the window keeps the app and mailboxes running. Quitting stops the local service; tmux terminals survive and reconnect next time.\n\nPreferences and chat stay in ~/.super-terminal. AI requests use your existing agent CLI accounts.'
     }) }] }
   ]));
 }
@@ -78,8 +74,7 @@ async function createWindow() {
   if (window && !window.isDestroyed()) { window.show(); window.focus(); return; }
   window = new BrowserWindow({
     width: 1440, height: 960, minWidth: 960, minHeight: 640, ...readBounds(),
-    title: 'Super Terminal', backgroundColor: '#101316', show: false,
-    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 12 } } : {}),
+    title: 'Super Terminal', backgroundColor: '#161616', show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true,
       sandbox: true, webSecurity: true, webviewTag: false, navigateOnDragDrop: false, spellcheck: false

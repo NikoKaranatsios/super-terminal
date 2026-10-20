@@ -1,36 +1,22 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="super-terminal-token" content="__TOKEN__">
-  <meta name="theme-color" content="#101316">
-  <title>Super Terminal</title>
-  <link rel="stylesheet" href="/app.css">
+  <title>Super Terminal</title><link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <div class="desktop-titlebar" aria-hidden="true">SUPER TERMINAL / LOCAL WORKSPACE</div>
-  <div id="app">
-    <aside class="sidebar">
-      <button class="brand" data-action="home"><span class="brand-icon">▸_</span><span>super terminal<span class="brand-sub">YOUR LOCAL WORKSPACE</span></span><span class="local-dot"></span></button>
-      <button class="new-session primary" data-action="new"><span>＋</span> New terminal <kbd>⇧⌘N</kbd></button>
-      <div class="search"><span>⌕</span><input id="search" placeholder="Find a session…" aria-label="Search sessions"><kbd>⌘K</kbd></div>
-      <div class="nav-tools">
-        <button data-work-overview="1" id="work-nav"><span>▤</span> Working sessions <span class="tiny">start → wrap</span></button>
-        <button data-action="coordinator" id="coord-nav"><span>✳</span> Coordinator <span class="tiny">on demand</span></button>
-        <button data-action="messages" id="messages-nav"><span>⇄</span> Agent messages <span id="message-count" class="count">0</span></button>
-      </div>
-      <div class="teams-heading"><span>TEAMS</span><button class="icon-button" data-action="new-team" aria-label="Create a team" title="Create a team">＋</button></div>
-      <div id="team-list"></div>
-      <div class="list-toolbar"><div class="segments" id="filters"><button class="selected" data-mode="all">All</button><button data-mode="live">Live</button><button data-mode="history">History</button></div><button class="icon-button" data-action="refresh" title="Refresh sessions" aria-label="Refresh sessions">↻</button></div>
-      <div class="group-bar"><span id="session-count">Loading sessions</span><select id="group-by" aria-label="Group sessions"><option value="group">By workspace</option><option value="provider">By agent</option><option value="host">By host</option></select></div>
-      <nav id="session-list" aria-label="Sessions"><div class="loading">Reading local sessions…</div></nav>
-      <div class="sidebar-footer"><span><i class="local-dot"></i> Local only</span><button data-action="settings" class="icon-button" aria-label="Startup prompts" title="Startup prompts">⚙</button><span id="connection-state">Connected</span></div>
-    </aside>
-    <main id="main"><div class="loading">Connecting to your workspace…</div></main>
-  </div>
-  <dialog id="dialog"></dialog>
-  <div id="toast" role="status" aria-live="polite"></div>
+  <aside id="sidebar">
+    <select id="environment" aria-label="Environment"><option value="local">Local</option></select>
+    <button id="conductor-nav" class="nav-item">Conductor</button>
+    <button id="team-messages-nav" class="nav-item" hidden>Team messages</button>
+    <div id="environment-status" role="status"></div>
+    <nav id="terminals" aria-label="Running terminals"></nav>
+    <details id="history"><summary>Conversations <span id="history-count"></span></summary><div id="history-list"></div></details>
+    <button id="settings-nav" class="nav-item">Settings</button>
+  </aside>
+  <main id="main"></main>
+  <div id="notice" role="status" aria-live="polite" hidden></div>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

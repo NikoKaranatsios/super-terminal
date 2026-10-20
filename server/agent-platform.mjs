@@ -33,7 +33,7 @@ export async function prepareBridge(session, root, port) {
   const remotePort = 30000 + (parseInt(session.id.replaceAll('-', '').slice(0, 6), 16) % 25000);
   config.url = `http://127.0.0.1:${remotePort}`;
   const install = `import os,json,sys,pathlib\nj=json.load(sys.stdin)\np=pathlib.Path.home()/'.super-terminal'\np.mkdir(mode=0o700,exist_ok=True)\nf=p/('agent-'+j['config']['id']+'.json')\nfor dest,content in [(p/'bridge.py',j['source']),(f,json.dumps(j['config']))]:\n fd=os.open(str(dest),os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)\n with os.fdopen(fd,'w') as out:out.write(content)\nprint(str(f))`;
-  const configPath = await runInput('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', session.host, `python3 -c ${quote(install)}`], JSON.stringify({ source: fs.readFileSync(source, 'utf8'), config }));
+  const configPath = await runInput('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', session.host, `${session.remoteUser ? 'sudo -n -u '+quote(session.remoteUser)+' ' : ''}python3 -c ${quote(install)}`], JSON.stringify({ source: fs.readFileSync(source, 'utf8'), config }));
   return { configPath, command: `python3 ${quote(path.posix.join(path.posix.dirname(configPath), 'bridge.py'))}`, sshArgs: ['-o', 'ExitOnForwardFailure=yes', '-R', `127.0.0.1:${remotePort}:127.0.0.1:${port}`] };
 }
 export function startupPrompt(session, bridge, role, task = '') {

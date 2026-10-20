@@ -1,10 +1,31 @@
 # Super Terminal
 
-A local desktop home for Codex, Claude, Grok, and ordinary terminals. No task board.
+A local desktop collection of your terminals, with one Conductor chat. No board or dashboard.
+
+Choose **Local**, **157**, or **Romagnolo 91** from the environment selector. The list refreshes automatically, including Codex, Claude, and Grok processes started outside the app. Click a terminal to use its original CLI; click an external agent to read its matched saved conversation. Provider background services are labelled separately from individual agents.
+
+## Conductor
+
+Conductor remembers your conversation and can ask about priorities and uncertain progress. It reads provider histories, caches assessments, and separates unfinished work from completed, uncertain, stale, and unreviewed conversations. The conversation list includes unreviewed history instead of pretending it has all been assessed.
+
+Ask it naturally, for example:
+
+- “What did I leave unfinished?”
+- “Start Claude in this project and ask it to review the tests.”
+- “Create a team with a Codex implementer and a Claude reviewer for this task.”
+- “Pause the agent working on the import, then resume it.”
+- “Stop that terminal and clean up stopped sessions.”
+- “Create a project for this existing folder and assign the agent to it.”
+- “Start a working session with these topics.”
+- “Wrap up this session and carry unfinished goals into the next one.”
+
+Actions run through a small validated platform API. Conductor sees the actual result before replying and reports partial failures. It can start/resume agents, start teams, queue agent messages, manage project records and assignments, start/pause/wrap human working sessions, update goals, pause/resume/stop processes, search history, and clean up stopped terminal entries. Cleanup preserves provider conversations and project files. Conductor does not have an arbitrary shell or authority to delete project files.
+
+**Team messages** shows the agents’ mailbox conversations, including sender, recipient, team, and delivery state. New agents receive peer/mailbox instructions and the team mission automatically. Messages are queued, not injected as keystrokes; agents check their inbox at milestones. External agents can be tracked and assigned but do not gain a mailbox or startup instructions retroactively.
+
+Conductor uses the installed Codex CLI login with GPT-6-Luna, low reasoning, compact instructions, no plugins or shell tools. The first briefing is automatic by default; subsequent model calls happen only when you ask. Each review reads a bounded batch of recent conversation excerpts, rotating across locations. Assessments and chat memory persist locally. “Review more history” continues with the next batch. History indexing and process refreshes themselves use no model calls.
 
 ## Desktop app
-
-On macOS, build and install the app once:
 
 ```sh
 brew install tmux
@@ -13,165 +34,52 @@ npm run install:desktop
 open "$HOME/Applications/Super Terminal.app"
 ```
 
-After installation, open **Super Terminal** from Finder, Spotlight, or the Dock. **Start Super Terminal.command** also opens the installed app and builds it on the first run. No browser tab or separate server terminal is needed.
+The installed app bundles its own Electron/Node runtime and starts its loopback service automatically. Open it through Finder, Spotlight, or the Dock. No separate browser or server terminal is needed.
 
-The Electron app bundles its own Node runtime and terminal backend. It has a native menu, Dock icon, keyboard shortcuts, a single-instance lock, and remembered window size/position. Its renderer is sandboxed, has no Node integration, and cannot navigate to arbitrary websites or create browser windows. Agent browsers keep their own separate profiles.
-
-The app automatically starts its loopback-only local service and reuses a compatible service already running on the same data folder. All existing data in `~/.super-terminal` is preserved. If an older web version occupies port 4317, stop that Node server once before opening the desktop app. This does not terminate tmux sessions.
-
-- **Close window (⌘W):** on macOS, the app and service keep running. Click its Dock icon to reopen the window.
-- **Quit app (⌘Q):** stops the service it started, including browser processes and an active coordinator request. Managed tmux terminals keep running; mailboxes and browser tools are unavailable until the app opens again.
-- **Reopen:** starts the service and reconnects to the same terminal sessions and work history.
-- **Reboot:** ends running processes; saved sessions, goals, notes, and provider conversation history remain on disk.
-
-Requirements to **run** the installed app: macOS Ventura or newer (or a compatible Linux desktop), Python 3, tmux, and your chosen agent CLIs. Continue using their existing sign-ins. CLI tools may themselves require Node; the packaged Super Terminal service does not require a separate Node installation. Building from source requires Node.js 22.13+ and npm. macOS builds are signed ad hoc for local use; they are not notarized for public distribution.
-
-### Desktop shortcuts
-
-| Shortcut (macOS) | Action |
+| Shortcut | Action |
 | --- | --- |
-| ⌘N | Start a working session |
-| ⇧⌘N | New agent terminal |
-| ⌘K | Find a terminal or conversation |
-| ⌘1 / ⌘2 / ⌘3 | Working sessions / Coordinator / Messages |
+| ⌘N | New terminal in the selected environment |
+| ⌘1 | Conductor |
+| ⌘2 | Environment selector |
+| ⌘, | Settings |
 
-For source development, run `npm run dev`. To build without installing, run `npm run package:desktop`; output goes to `release/` for the current OS and architecture. The macOS installer preserves an earlier app bundle as a dated backup and requires it to be closed before updating.
+**File → New Agent** starts Codex, Claude, or Grok with default instructions in the selected location. Settings contains terminal text size, the automatic first briefing, and agent startup prompts. The window uses a normal macOS title bar and plain terminal styling.
 
-The browser interface remains available for development with `npm run build && npm run start:web` at **http://127.0.0.1:4317**. It is not needed to use the desktop app.
+Closing the window keeps the app running on macOS. Quitting stops the local service, browser tools and active Conductor request; tmux terminals survive and reconnect next time. Rebooting ends processes but preserves conversation histories and app data.
 
-## What it does
+Runtime requirements: macOS Ventura or later, tmux, Python 3, and the agent CLIs you use, with their existing sign-ins. Building requires Node 22.13+ and npm. The macOS bundle is ad hoc signed for personal use, not notarized for public distribution.
 
-- Real interactive terminals with xterm.js, node-pty, and tmux. Native slash commands, permission prompts, shortcuts, and existing CLI login work normally.
-- A searchable sidebar grouped by workspace, provider, or host; split view for two terminals.
-- Read-only discovery of local terminal processes and default tmux sessions.
-- Local Codex, Claude, and Grok conversation previews and resumption. Large previews are bounded; full conversations remain accessible through the CLI.
-- Explicitly configured SSH hosts, remote process discovery, remote tmux attachment, and new SSH terminals.
-- Editable startup prompts, shared group notes, and persistent agent mailboxes.
-- A lightweight, **on-demand** coordinator. No background model calls.
-- Separate, persistent browser profiles per managed session, launched only when requested.
-- Working sessions with a start briefing, a project/goal outline, progress, and a saved wrap-up.
-- Teams with a shared mission, editable agent roles, and drag-and-drop membership.
+## Discovery and SSH
 
-## Your working session
+Only destinations in `~/.super-terminal/connections.json` are enabled. The personal installation contains the two requested servers. Hostnames and credentials are not committed. `connections.example.json` shows the format for a fresh installation. SSH uses existing keys and normal host-key verification; ports and jumps belong in `~/.ssh/config`.
 
-Open **Working sessions → Start a working session**. Enter the big topics you want to tackle, one per line:
+Local processes refresh about every 7 seconds; remote processes every 20 seconds; remote history indexes every minute. Failed SSH scans remove stale processes from the live list while retaining cached histories. Zombie processes are excluded. Process existence does not mean an agent is currently doing work.
 
-```text
-Romagnolo: Finish the release flow
-Romagnolo: Verify onboarding
-Research: Prepare the demo
-```
+Remote discovery is read-only. If the SSH account already permits passwordless sudo, the reader uses that existing permission to inspect root-owned provider histories and histories belonging to discovered agent accounts. It never enables sudo, requests passwords, or changes permissions. Without that access it reads what the SSH account can access. Root-owned tmux panes can be attached using the same existing sudo permission. Resumed conversations retain their original server user.
 
-The app groups these into **working session → projects → goals/tasks**. Other lines go into General. This outline uses no model calls. A working session is your work period; agent terminals are separate and survive moving between working sessions.
+Provider history readers support Codex SQLite/JSONL, Claude project JSONL, and Grok session summaries/JSONL. They read bounded text excerpts, omit tool output, tolerate partial writes, and never modify provider history. Codex indexing includes up to 2,000 unarchived threads per account.
 
-- **Start:** optionally carry unfinished goals from a previous session and request a quick AI briefing. Only one working session is active at a time; starting another pauses the previous one.
-- **Progress:** click `[ ]`, `[~]`, or `[x]` to change a goal's status, or click its title to save progress notes. Set a project's folder and local/SSH host through its location link.
-- **Assign:** use **＋ Agent** at the session, project, or goal level. Launch a new agent with that scope or assign a managed terminal already running. Agents in the same working session can exchange handoffs, even across project groups.
-- **Wrap up:** save a handoff note, completed work, and open goals. This makes a local summary without a model call and leaves your terminals running. **Start next session** carries only unfinished goals forward with fresh identifiers.
+External conversations are linked using a resume ID, an open transcript file, or a unique provider/folder/start-time match (labelled in the view). Ambiguous same-folder conversations are offered as candidates, not asserted to belong to a process. A shared Codex runtime may have several open conversations. An inaccessible or unlogged conversation cannot be reconstructed.
 
-Scoped agents can report their own progress with the helper:
+Ordinary terminal processes started outside the app cannot have their live screen/input safely adopted. Their saved conversations remain readable, and individual processes can be paused/stopped where OS permissions permit. Existing tmux sessions can be attached directly. Shared provider services cannot be stopped through Conductor because they may host unrelated agents. Process control is not a container sandbox; detached child services may have their own lifetimes.
+
+## Agent communication and browsers
+
+Managed agents receive a private Python helper and session-scoped credential. Same-group agents or agents in the same human working session can exchange messages and progress. Remote agents connect through a loopback-only reverse SSH tunnel. Their credentials cannot control arbitrary terminals or call Conductor’s management API.
+
+The helper exposes `peers`, `inbox`, `send`, `context`, `progress`, and `browser` commands. Startup instructions include the full command path. Each agent browser owns its own persistent profile, cookies, and storage, separate from your personal browser tabs. Browser instances start on demand. This isolates browser state, not the filesystem; CLI permissions and approval mechanisms remain in effect.
+
+## Local data and development
+
+Persistent data lives under `~/.super-terminal/`: approved connections, terminal metadata, Conductor chat/memory/assessments, project and working-session records, team mail, startup prompts, private bridge credentials, and isolated browser profiles. Provider CLIs keep their own sign-ins and source histories. Nothing in that folder is uploaded to GitHub. Conductor requests send bounded work context through your existing Codex account.
+
+The renderer is sandboxed with no Node integration or arbitrary navigation. The service binds only to loopback, validates Host/Origin, and requires a fresh per-start token. Keep it off public proxies.
 
 ```sh
-python3 /path/to/super-terminal/server/bridge.py progress --status doing --notes "Implementing the API."
-python3 /path/to/super-terminal/server/bridge.py progress --goal GOAL_ID --status done --notes "Implemented and verified."
+npm run dev              # desktop development
+npm test                 # isolated backend tests; no model calls or SSH scans
+npm run test:desktop     # bundled Node/native PTY/persistence check
+npm run package:desktop  # build into release/
 ```
 
-Goal-level agents can update only their assigned goal; project-level and session-level agents can update goals within their assigned layer. A completion report must include a note. Assigning an existing agent queues its new scope in its inbox; it does not interrupt its current prompt.
-
-## Teams
-
-Click **Teams ＋**, enter a mission, choose a folder and host, and optionally link the team to a working session or project. Add existing managed terminals with **Add existing agent** or drag them from the sidebar onto the team.
-
-**Launch agents** offers editable Lead, Implementer, and Reviewer roles with Codex, Claude, or Grok selectable for each. Launching starts the selected CLIs with the mission, role, shared context, and mailbox instructions. **Brief existing agents** queues the current mission in their inboxes. A team can mix providers and existing local/remote terminals.
-
-## SSH connections
-
-Store approved connections outside the repository:
-
-```sh
-mkdir -p ~/.super-terminal
-cp connections.example.json ~/.super-terminal/connections.json
-chmod 600 ~/.super-terminal/connections.json
-```
-
-Edit that file to contain your SSH aliases or `user@hostname` targets, then restart. Only these hosts can be launched from the app. SSH uses your existing keys and known-host verification. Configure nonstandard ports and proxy jumps in `~/.ssh/config`. Servers need Python 3 for the mailbox bridge and tmux for sessions to survive a lost SSH connection. Agent CLIs must also be installed and signed in on the remote machine.
-
-Launching a managed remote session installs a small Python helper and a private, session-scoped credential under that SSH user's `~/.super-terminal/`. A loopback-only reverse SSH tunnel lets that session use its mailbox and private browser on the local platform. It has no access to the dashboard's terminal-control API. Agent browsers run on the local computer, including for remote agents.
-
-Discovery connects on server startup and when you click **Scan**. Remote agents belonging to a different OS user may have an unavailable working directory or inaccessible tmux session.
-
-## Working together
-
-Launch agents in the same **group**. The platform appends instructions for discovering peers, reading shared context, sending handoffs, and checking the inbox at meaningful milestones. Set each agent's role or conventions in **Startup prompts** (⚙), and provide its actual assignment in **Initial task**.
-
-The built-in helper uses only Python's standard library:
-
-```sh
-python3 /path/to/super-terminal/server/bridge.py peers
-python3 /path/to/super-terminal/server/bridge.py inbox
-python3 /path/to/super-terminal/server/bridge.py context
-python3 /path/to/super-terminal/server/bridge.py send --to SESSION_ID --message "The API is ready."
-python3 /path/to/super-terminal/server/bridge.py send --to coordinator --message "Blocked on credentials."
-```
-
-`SUPER_TERMINAL_AGENT_CONFIG` is supplied automatically to managed terminals. Remote startup prompts contain the appropriate remote helper path. Inboxes mark messages read when requested. Mail does not inject keystrokes into a running agent and does not automatically wake idle agents. Agents still need to follow their startup instructions; cooperation is not an autonomous scheduler.
-
-Shared notes and messages stay local. Clicking **Ask coordinator** sends a bounded snapshot to the selected model through the Codex CLI and its existing login. The default is GPT-6-Luna with low reasoning effort, compact replacement instructions, no user plugins or shell tools, and a read-only sandbox. It sees at most 16 terminal summaries, 8 recent conversations, 14 mailbox messages, and relevant notes; the snapshot is capped at 22,000 characters. Actual input/output token counts appear under each answer. It summarizes and proposes handoffs; it does not dispatch work. Set `SUPER_TERMINAL_COORDINATOR_MODEL` if your account needs another model.
-
-The coordinator uses Codex's documented [`model_instructions_file` setting](https://learn.chatgpt.com/docs/config-file/config-reference) to avoid loading the full coding-agent instructions for a short status update.
-
-## Separate browsers
-
-Each managed session gets its own browser profile with separate cookies and storage. It never attaches to your normal browser profile or tabs. Google Chrome is detected on macOS/Linux; alternatively install Playwright Chromium with `npx playwright install chromium`, or set `SUPER_TERMINAL_BROWSER` to a compatible executable.
-
-```sh
-python3 /path/to/super-terminal/server/bridge.py browser open --url https://example.com
-python3 /path/to/super-terminal/server/bridge.py browser snapshot
-python3 /path/to/super-terminal/server/bridge.py browser click --selector 'role=button[name="Continue"]'
-python3 /path/to/super-terminal/server/bridge.py browser fill --selector '#field' --text 'value'
-python3 /path/to/super-terminal/server/bridge.py browser press --key Enter
-python3 /path/to/super-terminal/server/bridge.py browser screenshot
-python3 /path/to/super-terminal/server/bridge.py browser close
-```
-
-Snapshots expose accessible page text; screenshots are saved on the calling agent's machine. The dashboard's **Browser** button lets you inspect the current page. Browser profile isolation is **not** a filesystem or container sandbox. CLI agents retain their usual permissions; Super Terminal does not bypass approval prompts.
-
-## Boundaries
-
-- Arbitrary terminals already running elsewhere are discoverable but cannot safely be adopted. Control them in the original terminal, attach through tmux, or resume their saved conversation here.
-- Existing sessions launched outside this platform do not receive its startup prompt or mailbox automatically.
-- Remote process metadata and tmux sessions are discovered; remote provider conversation archives are not imported in this version.
-- Closing a managed SSH terminal disconnects SSH; an existing remote tmux session may continue on the server. Reattach via **Scan**. Its mailbox tunnel must be re-established to continue using local platform tools.
-- History readers support the local provider formats detected during development. They tolerate partial JSONL records and do not modify provider state.
-- This app can control your shell. Keep it on loopback; do not expose it through a public proxy. It rejects unexpected Host/Origin values, requires a per-start dashboard token, and gives agent clients separate scoped credentials.
-
-## Local data
-
-Everything persistent is under `~/.super-terminal/`:
-
-| Path | Contents |
-| --- | --- |
-| `connections.json` | Approved SSH destinations |
-| `state.json` | Working sessions, projects/goals, teams, terminal metadata, prompts, messages, coordinator history |
-| `agents/` | Private agent bridge credentials |
-| `context/` | Shared Markdown notes |
-| `browsers/` | Separate browser profiles |
-| `desktop/` | Desktop app preferences and renderer storage |
-| `desktop-window.json` | Window size and position |
-| `desktop-service.log` | Local service diagnostics (rotated on startup) |
-
-These paths are outside the Git repository. Codex, Claude, and Grok keep their own authentication and conversation storage.
-
-Optional environment variables: `PORT` (default 4317), `SUPER_TERMINAL_DATA`, `SUPER_TERMINAL_SOCKET`, `SUPER_TERMINAL_BROWSER`, `SUPER_TERMINAL_COORDINATOR_MODEL`.
-
-## Verify
-
-```sh
-npm run build
-npm test
-npm run test:desktop
-```
-
-Tests exercise real PTY input, resize and reconnection, shell quoting, state persistence, access controls, scoped messaging/progress, team launch, session wrap-up/carry-forward, and browser cookie isolation. Integration tests use temporary storage and a separate tmux server. They do not contact configured SSH servers or make model requests.
-
-The desktop runtime check starts the backend under Electron's bundled Node runtime, opens a real PTY, checks service reuse, restarts the service, and verifies that the terminal survived. It uses its own temporary data folder and tmux server.
+`npm run build && npm run start:web` exposes the same local interface for development. Optional environment variables: `PORT` (4317), `SUPER_TERMINAL_DATA`, `SUPER_TERMINAL_SOCKET`, and `SUPER_TERMINAL_BROWSER`.

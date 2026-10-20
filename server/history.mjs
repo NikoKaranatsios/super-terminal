@@ -84,8 +84,8 @@ export class History {
       const dbFiles = list(roots.codex).filter(f => /^state_\d+\.sqlite$/.test(f.name)).sort((a, b) => b.name.localeCompare(a.name, undefined, { numeric: true }));
       if (dbFiles.length) {
         db = new DatabaseSync(path.join(roots.codex, dbFiles[0].name), { readOnly: true });
-        for (const r of db.prepare('SELECT id, cwd, title, updated_at, rollout_path FROM threads WHERE archived = 0 ORDER BY updated_at DESC LIMIT 2000').all()) {
-          rows.push(row('codex', r.id, r.cwd, r.title, new Date(r.updated_at * 1000).toISOString(), r.rollout_path));
+        for (const r of db.prepare('SELECT id, cwd, title, updated_at, created_at, rollout_path FROM threads WHERE archived = 0 ORDER BY updated_at DESC LIMIT 2000').all()) {
+          rows.push({ ...row('codex', r.id, r.cwd, r.title, new Date(r.updated_at * 1000).toISOString(), r.rollout_path), createdAt: new Date(r.created_at * 1000).toISOString() });
         }
       }
     } catch (e) { this.warnings.push(`Codex index: ${e.message}`); }
@@ -115,7 +115,7 @@ export class History {
         if (!meta) continue;
         const title = records.findLast(r => r.type === 'custom-title')?.customTitle || records.findLast(r => r.type === 'summary')?.summary ||
           messagesFromRecords('claude', records).find(m => m.role === 'user')?.text;
-        rows.push(row('claude', meta.sessionId || f.name.slice(0, -6), meta.cwd, title, fs.statSync(file).mtime.toISOString(), file));
+        rows.push({ ...row('claude', meta.sessionId || f.name.slice(0, -6), meta.cwd, title, fs.statSync(file).mtime.toISOString(), file), createdAt: records.find(r => r.timestamp)?.timestamp });
       }
     }
     for (const project of list(path.join(roots.grok, 'sessions'))) {
@@ -150,3 +150,32 @@ export class History {
   }
 }
 export function publicHistory({ file, ...row }) { return row; }
+
+// One read interface for local files and the two already-approved SSH accounts.
+export class EnvironmentHistory {
+  constructor(local, remotes, remoteRead) { Object.assign(this, { local, remotes, remoteRead }); this.transcripts = new Map(); }
+  get warnings() { return this.local.warnings; }
+  async all(force = false) { return [...await this.local.all(force), ...[...this.remotes.values()].flatMap(r => r.history || [])].sort((a,b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)); }
+  async get(id) { return (await this.all()).find(r => r.id === id); }
+  async transcript(id) {
+    const session = await this.get(id);
+    if (!session) throw new Error('Conversation no longer found.');
+    if (session.host === 'local') return this.local.transcript(id);
+    const cached = this.transcripts.get(id);
+    if (cached?.version === session.updatedAt && Date.now() - cached.at < 15000) return cached.value;
+    const result = await this.remoteRead(session.host, 'transcript', `${session.provider}:${session.sessionId}`);
+    const value = { session: publicHistory(session), messages: result.messages, note: 'Recent saved text. Tool output and older portions of large conversations are omitted.' };
+    this.transcripts.set(id, { version: session.updatedAt, at: Date.now(), value });
+    if (this.transcripts.size > 100) this.transcripts.delete(this.transcripts.keys().next().value);
+    return value;
+  }
+}
+export function matchHistory(agent, rows) {
+  const candidates = rows.filter(r => r.host === agent.host && r.provider === agent.provider);
+  const exact = candidates.filter(r => agent.historyId === r.id || agent.resumeId === r.sessionId || agent.files?.includes(r.file));
+  if (exact.length === 1) return exact[0].id;
+  if (agent.runtime) return null;
+  // New CLI sessions are created immediately after the process starts. Ambiguity stays unlinked.
+  const started = candidates.filter(r => r.cwd === agent.cwd && Number.isFinite(Date.parse(agent.startedAt)) && Math.abs(Date.parse(r.createdAt)-Date.parse(agent.startedAt)) < 15000);
+  return started.length === 1 ? started[0].id : null;
+}

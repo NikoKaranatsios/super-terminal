@@ -1,4 +1,0 @@
-.desktop-titlebar { display: none; }
-body.desktop-mac .desktop-titlebar { display: flex; align-items: center; justify-content: center; height: 38px; background: #151a1c; border-bottom: 1px solid #293033; color: #80958e; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .15em; user-select: none; -webkit-app-region: drag; }
-body.desktop-mac #app { height: calc(100vh - 38px); }
-body.desktop .brand-sub { letter-spacing: .16em; }

@@ -1,0 +1,146 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "answer",
+    "memory",
+    "assessments",
+    "actions"
+  ],
+  "properties": {
+    "answer": {
+      "type": "string"
+    },
+    "memory": {
+      "type": "string"
+    },
+    "assessments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "status",
+          "summary"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "completed",
+              "uncertain",
+              "stale"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "target",
+          "name",
+          "provider",
+          "host",
+          "cwd",
+          "text",
+          "state",
+          "projectId",
+          "teamId",
+          "members",
+          "workSessionId",
+          "goalId"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "start_agent",
+              "start_team",
+              "message_agent",
+              "create_project",
+              "update_project",
+              "assign_agent",
+              "session_state",
+              "cleanup",
+              "read_conversation",
+              "search_history",
+              "start_work_session",
+              "work_session_state",
+              "goal_progress",
+              "resume_conversation"
+            ]
+          },
+          "target": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "teamId": {
+            "type": "string"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "provider",
+                "role",
+                "task"
+              ],
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "task": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "workSessionId": {
+            "type": "string"
+          },
+          "goalId": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
