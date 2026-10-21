@@ -6,7 +6,9 @@ import { dataDir } from './core.mjs';
 export class AgentBrowsers {
   contexts = new Map();
   pending = new Map();
+  closing = false;
   async get(id) {
+    if (this.closing) throw new Error("Browsers are shutting down.");
     if (this.contexts.has(id)) return this.contexts.get(id);
     if (this.pending.has(id)) return this.pending.get(id);
     const create = (async () => {
@@ -38,6 +40,8 @@ export class AgentBrowsers {
   }
   async action(id, input) {
     if (input.action === 'close') {
+      // A launch may still be in flight when the user closes this session.
+      await this.pending.get(id)?.catch(() => {});
       await this.contexts.get(id)?.context.close();
       return { ok: true };
     }
@@ -63,5 +67,9 @@ export class AgentBrowsers {
       hint: 'Use Playwright selectors: getByRole-equivalent CSS such as role=button[name="Submit"], text=Continue, or #id. Each session owns this browser.'
     };
   }
-  async close() { await Promise.allSettled([...this.contexts.values()].map(s => s.context.close())); }
+  async close() {
+    this.closing = true;
+    await Promise.allSettled([...this.pending.values()]);
+    await Promise.allSettled([...this.contexts.values()].map(s => s.context.close()));
+  }
 }

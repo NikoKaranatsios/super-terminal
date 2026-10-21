@@ -6,7 +6,7 @@ Current feature build: package `0.5.0`, based on `f4252a8`. No record implies ve
 
 | Check | Result and limit |
 | --- | --- |
-| `npm test` | 76 passing tests, including eight real-backend integration subtests and fixture-renderer coverage. No paid model requests or approved-host SSH scans. Test-owned shells, browsers, state directories and sockets are isolated. |
+| `npm test` | 80 passing tests, including ten real-backend integration subtests and fixture-renderer coverage. No paid model requests or approved-host SSH scans. Test-owned shells, browsers, state directories and sockets are isolated. |
 | `npm run build` / `git diff --check` | Passed. |
 | `npm run test:desktop` | Passed: Electron utility runtime, native PTY, protocol-compatible service reuse, shutdown and tmux survival across backend restart. This is not native window/banner acceptance. |
 | Scoped continuous coordination | Fake-model tests cover cadence, zero-call idle collection, pause/stop, stale in-flight completion, backoff, narrow scope, usage, traces, duplicate actions and concurrent reports. Policy tests reject conflicting task/team aliases, inactive goals and out-of-scope targets. |

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { run, env, home, tmuxRun, socket, providerOf, repository, validHost, quote } from './core.mjs';
+import { run, env, tmuxRun, socket, providerOf, repository, validHost, quote } from './core.mjs';
 
 export async function tmuxSessions(targetSocket = socket) {
   try {
@@ -61,13 +61,6 @@ export async function externalTerminals(excludeTtys = []) {
     const repo = repository(cwd);
     return { id: `external:${p.pid}`, kind: 'external', provider: providerOf(p.command), title: `${p.command} · ${p.tty}`, host: 'local', cwd, repository: repo, group: repo ? path.basename(repo) : path.basename(cwd) || 'Loose sessions', pid: p.pid, tty: p.tty, files, runtime, resumeId, startedAt, status: p.processState.startsWith('T') ? 'paused' : 'external' };
   }))).filter(Boolean);
-}
-export function sshAliases() {
-  try {
-    return fs.readFileSync(path.join(home, '.ssh/config'), 'utf8').split('\n')
-      .filter(l => /^\s*Host\s+/i.test(l)).flatMap(l => l.trim().split(/\s+/).slice(1))
-      .filter(s => !/[*?!]/.test(s)).filter(s => { try { validHost(s); return true; } catch { return false; } });
-  } catch { return []; }
 }
 const remoteScript = fs.readFileSync(new URL('./remote-reader.py', import.meta.url), 'utf8');
 export async function remoteRead(host, mode, id = '', cursor) {

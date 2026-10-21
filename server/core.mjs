@@ -30,7 +30,7 @@ export function text(value, max = 200) {
   return value.trim();
 }
 export function validHost(value) {
-  if (typeof value !== 'string' || value.length > 200 || !/^(?:[a-zA-Z0-9_.-]+@)?[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(value)) throw new Error('Use an SSH alias or user@hostname (configure ports in ~/.ssh/config).');
+  if (typeof value !== 'string' || value.length > 200 || !/^(?:[a-zA-Z0-9_][a-zA-Z0-9_.-]*@)?[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(value)) throw new Error('Use an SSH alias or user@hostname (configure ports in ~/.ssh/config).');
   return value;
 }
 export function localDirectory(value = home) {

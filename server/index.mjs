@@ -299,17 +299,20 @@ app.post('/api/work-sessions', route(async (req, res) => {
 app.patch('/api/work-sessions/:id', route(async (req, res) => {
   const session = store.state.workSessions.find(s => s.id === req.params.id);
   if (!session) throw new Error('Working session not found.');
-  if (req.body.title !== undefined) session.title = text(req.body.title, 200);
+  const update = { ...session };
+  if (req.body.title !== undefined) update.title = text(req.body.title, 200);
   if (req.body.notes !== undefined) {
     if (typeof req.body.notes !== 'string' || req.body.notes.length > 12000) throw new Error('Session notes are limited to 12,000 characters.');
-    session.notes = req.body.notes;
+    update.notes = req.body.notes;
   }
+  if (req.body.status !== undefined && !['active','paused','wrapped'].includes(req.body.status)) throw new Error('Unknown working-session state.');
   if (req.body.status === 'active') {
     for (const s of store.state.workSessions) if (s.status === 'active') s.status = 'paused';
-    session.status = 'active'; session.endedAt = null;
+    update.status = 'active'; update.endedAt = null;
   } else if (req.body.status === 'wrapped') {
-    session.status = 'wrapped'; session.endedAt = new Date().toISOString(); session.summary = wrapSummary(session);
-  } else if (req.body.status === 'paused') session.status = 'paused';
+    update.status = 'wrapped'; update.endedAt = new Date().toISOString(); update.summary = wrapSummary(update);
+  } else if (req.body.status === 'paused') update.status = 'paused';
+  Object.assign(session, update);
   store.save(); res.json(session);
 }));
 app.post('/api/work-sessions/:id/projects', route(async (req, res) => {
@@ -326,10 +329,10 @@ app.post('/api/work-sessions/:id/projects', route(async (req, res) => {
 app.patch('/api/work-sessions/:id/projects/:projectId', route(async (req, res) => {
   const project = store.state.workSessions.find(s => s.id === req.params.id)?.projects.find(p => p.id === req.params.projectId);
   if (!project) throw new Error('Project not found.');
-  const host = req.body.host && req.body.host !== 'local' ? validHost(req.body.host) : 'local';
+  const host = req.body.host === undefined ? project.host : req.body.host !== 'local' ? validHost(req.body.host) : 'local';
   if (host !== 'local' && !allowedHosts.includes(host)) throw new Error('This SSH host is not configured.');
-  project.host = host;
-  project.cwd = host === 'local' ? localDirectory(req.body.cwd || home) : text(req.body.cwd || '~', 2000);
+  const cwd = host === 'local' ? localDirectory(req.body.cwd || project.cwd || home) : text(req.body.cwd || project.cwd || '~', 2000);
+  Object.assign(project, { host, cwd });
   const canonical = store.state.projects.find(p => p.id === project.canonicalProjectId);
   if (canonical) Object.assign(canonical, { host: project.host, cwd: project.cwd });
   store.save(); res.json(project);

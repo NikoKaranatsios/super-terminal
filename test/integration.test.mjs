@@ -137,6 +137,31 @@ test('real PTYs, persistent sessions, scoped mailboxes, and isolated browsers', 
     assert.equal(retried.launched.length,0);
     assert.equal(retried.existing.length,1);
   });
+  await t.test('concurrent team starts launch a role only once', async () => {
+    const team = await api('/teams', 'POST', { name: 'Concurrent team', mission: 'Synthetic shell test', cwd: dir, host: 'local' });
+    const start = () => fetch(base + '/api/teams/' + team.id + '/start', {
+      method: 'POST', headers: { 'x-super-terminal': auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ roles: [{ name: 'Verifier', provider: 'shell' }] })
+    });
+    const results = await Promise.all([start(), start()]);
+    assert.deepEqual(results.map(r => r.status).sort(), [200, 200]);
+    const sessions = (await api('/state')).sessions.filter(s => s.group === team.name);
+    assert.equal(sessions.length, 1);
+  });
+  await t.test('rejected updates leave session scope and progress unchanged', async () => {
+    const reject = async (url, body) => assert.equal((await fetch(base + '/api' + url, {
+      method: 'PATCH', headers: { 'x-super-terminal': auth, 'content-type': 'application/json' }, body: JSON.stringify(body)
+    })).status, 400);
+    const before = (await api('/state')).sessions.find(s => s.id === two.id);
+    await reject('/sessions/' + two.id, { group: 'Should not change', scope: { workSessionId: 'missing' } });
+    assert.equal((await api('/state')).sessions.find(s => s.id === two.id).group, before.group);
+    const work = await api('/work-sessions', 'POST', { title: 'Atomic updates', topics: 'Project: Keep open' });
+    await reject('/work-sessions/' + work.id, { title: 'Should not change', notes: 42 });
+    await reject('/work-sessions/' + work.id + '/goals/' + work.projects[0].goals[0].id, { status: 'done', notes: 42 });
+    const saved = (await api('/state')).workSessions.find(s => s.id === work.id);
+    assert.equal(saved.title, 'Atomic updates');
+    assert.equal(saved.projects[0].goals[0].status, 'todo');
+  });
   await t.test('working sessions support scoped agents, progress, wrap-up and carry-forward', async () => {
     const work=await api('/work-sessions','POST',{title:'Verification work',topics:'Alpha: Finish API\nBeta: Verify interface'});
     const alpha=work.projects[0], beta=work.projects[1];
