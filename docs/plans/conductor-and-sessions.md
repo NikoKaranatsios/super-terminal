@@ -45,6 +45,8 @@ Sources: [coordinator](../../server/coordinator.mjs), [actions](../../server/con
 
 **Implemented.** Continuous collection uses no model. Eligible work changes and active unfinished work trigger paced decisions; empty/unchanged completed scopes stay listening without model calls. The loop persists run/pause/stop intent, backs off failures, and permits one reply at once. Input is capped at 24,000 bytes with omission counts; round usage is aggregated. Action results, duplicate receipts, cancellation state and provider-visible trace events persist. `conductor-policy.mjs` rechecks fresh active scope before autonomous mutations. Optional first briefings remain read-only.
 
+Response instructions request concise Markdown: the result first, normally 40–100 words or fewer, only material evidence/blockers/next steps, and one progress sentence during action rounds. Important uncertainty is retained; there is no hard truncation by word count. Bold, inline code and one optional highlight emphasize useful information. This is generation guidance; actual word/token savings and adherence require a provider-backed evaluation.
+
 **Remaining gap.** The byte cap is not an exact token count or billing cap. Crash recovery of an action between its external effect and receipt remains conservative, not a distributed transaction. Provider-authenticated, remote and long-running acceptance are separate from fake-model tests.
 
 **Implementation.**

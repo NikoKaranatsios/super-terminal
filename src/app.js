@@ -180,7 +180,9 @@ function renderChat() {
   const signature = JSON.stringify([status.history,status.trace,status.events]);
   if (output.dataset.signature !== signature) {
     const nearBottom = output.scrollHeight-output.scrollTop-output.clientHeight < 100;
+    const expanded = new Set([...output.querySelectorAll('details[data-trace-id][open]')].map(el=>el.dataset.traceId));
     output.innerHTML = status.history.map(conductorTurnMarkup).join('') + (status.trace || status.events || []).map(traceMarkup).join('') || '<div class="muted">Describe your work here. Conductor can organize projects and tasks, assemble teams, and manage agents. No goal forms are needed.</div>';
+    for(const detail of output.querySelectorAll('details[data-trace-id]'))detail.open=expanded.has(detail.dataset.traceId);
     output.dataset.signature = signature; if (nearBottom) output.scrollTop = output.scrollHeight;
   }
   const reviewed = state.history.filter(s => assessment(s)).length;
@@ -355,6 +357,12 @@ $('#environment').onchange = e => {
 };
 $('#conductor-nav').onclick=chat; $('#team-messages-nav').onclick=()=>messages(''); $('#settings-nav').onclick=settings;
 document.addEventListener('click',e=>{const button=e.target.closest('[data-id]'); if(button) open(button.dataset.id); const team=e.target.closest('[data-team]'); if(team) messages(team.dataset.team);});
+document.addEventListener('click',e=>{
+  const link=e.target.closest('#chat-output .console-markdown a[href]');
+  if(!link || !window.superTerminalDesktop?.openLink)return;
+  e.preventDefault();
+  if(e.isTrusted)window.superTerminalDesktop.openLink(link.href).then(ok=>{if(!ok)notice('This link cannot be opened.');}).catch(error=>notice(error.message));
+});
 document.addEventListener('change',e=>{
   if(e.target.id==='working-session-select'){workSessionId=e.target.value;localStorage.setItem('workingSessionSelection',workSessionId);workingSession();}
   if(e.target.matches('[data-work-filter]')){workFilter=e.target.value;const v=views.get('overview');if(v)renderWorkView('overview',v);}

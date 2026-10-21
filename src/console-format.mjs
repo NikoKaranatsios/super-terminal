@@ -1,4 +1,5 @@
 import { terminalTheme } from './terminal-theme.mjs';
+import { markdownText } from './markdown.mjs';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const colors = ['black','red','green','yellow','blue','magenta','cyan','white','brightBlack','brightRed','brightGreen','brightYellow','brightBlue','brightMagenta','brightCyan','brightWhite'].map(name => terminalTheme[name]);
@@ -69,39 +70,9 @@ function ansiText(value, state) {
   return html+paint(value.slice(start));
 }
 
-function inlineText(value, state) {
-  const tokens = /(`+)([^\n]*?)\1|\*\*([^\n]+?)\*\*|(?<!\*)\*([^*\n]+)\*(?!\*)/g;
-  let html = '', start = 0;
-  for (const match of value.matchAll(tokens)) {
-    html += ansiText(value.slice(start,match.index),state);
-    const tag = match[1] ? 'code' : match[3] ? 'strong' : 'em';
-    html += `<${tag}>${ansiText(match[2] ?? match[3] ?? match[4],state)}</${tag}>`;
-    start = match.index+match[0].length;
-  }
-  return html+ansiText(value.slice(start),state);
-}
-
 export function consoleText(value, { markdown = false } = {}) {
-  const text = String(value ?? ''), state = {};
-  if (!markdown) return ansiText(text,state);
-  const lines = text.split('\n'); let html = '', fence = null;
-  for (let i=0; i<lines.length; i++) {
-    const line = lines[i], marker = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
-    if (!fence && marker) {
-      fence = marker[1]; html += `<pre class="console-code">${marker[2].trim() ? `<span class="console-language">${escape(marker[2].trim())}</span>` : ''}<code>`; continue;
-    }
-    if (fence && marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
-      html += '</code></pre>'; fence = null; continue;
-    }
-    if (fence) html += ansiText(line,state);
-    else {
-      const heading = /^#{1,6}\s+(.+)$/.exec(line);
-      html += heading ? `<strong class="console-heading">${inlineText(heading[1],state)}</strong>` : inlineText(line,state);
-    }
-    if (i < lines.length-1) html += '\n';
-  }
-  if (fence) html += '</code></pre>';
-  return html;
+  const text = String(value ?? '');
+  return markdown ? markdownText(text,ansiText) : ansiText(text,{});
 }
 
 export function traceTone(event) {
@@ -119,6 +90,14 @@ export function traceTone(event) {
 export function traceMarkup(event) {
   if (typeof event === 'string') return `<div class="line trace-line console-meta"><div class="console-body">${consoleText(event)}</div></div>`;
   if (!event || typeof event !== 'object') return '';
+  // Keep the complete structured transport available without duplicating a
+  // JSON-escaped answer in the main reading flow. Commentary stays expanded.
+  if (event.name === 'agent_message' && typeof event.text === 'string') {
+    try {
+      const payload = JSON.parse(event.text);
+      if (typeof payload.answer === 'string' && Array.isArray(payload.actions) && Array.isArray(payload.assessments)) return `<details class="line trace-line console-meta console-payload" data-trace-id="${escape(JSON.stringify([event.at,event.itemId,event.seq]))}"><summary>Model response · structured data</summary><pre>${consoleText(event.text)}</pre></details>`;
+    } catch {}
+  }
   const tone = traceTone(event);
   const text = [event.text || event.message,event.output,event.result,event.usage].filter(value => value != null && value !== '').map(readable).join('\n');
   const label = event.kind || event.type || event.role || 'activity';

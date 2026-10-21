@@ -1,6 +1,14 @@
 # Verification evidence and remaining checks
 
-Current build: package `0.5.1`, adding Conductor console formatting to the `0.5.0` feature build consolidated at `52d2e41`. No record implies verification of every personal agent, provider version or SSH environment.
+Current build: package `0.5.2`, adding Markdown readability and concise-response instructions to `0.5.1`. No record implies verification of every personal agent, provider version or SSH environment.
+
+## Markdown readability evidence (`0.5.2`)
+
+- Nine [formatter tests](../test/console-format.test.mjs) and the [renderer fixture](../test/work-ui.test.mjs) pass. Coverage includes nested lists, headings, tables, read-only checklists, quotes, marks, syntax highlighting, literal fallbacks, expandable structured replies, markup escaping, URL validation and desktop link dispatch through a fake bridge.
+- The synthetic wide split-pane preview was visually inspected. Lists, table cells, a highlighted blocker, JSON syntax colors and an underlined link remain readable. No personal transcript is stored as a fixture.
+- Build, whitespace checks and `npm run test:desktop` pass. Dependency installation reported no known audit vulnerabilities. The runtime check does not exercise the native external-browser launch itself.
+- Concise-response instructions are configured and reviewed; no paid model call was made to measure adherence or token savings. Responses are not forcibly truncated.
+- Installed `0.5.2`, reopened the native Conductor view and visually checked paragraph spacing, bounded reply width, inline code and collapsed structured output. The fixture also verifies expanded details survive incoming progress. All 38 checked runtime/source/asset files match the build, strict deep signature verification passed, and all three pre-install managed tmux sessions survived. No generated app copy remains in release output. Native external-link opening remains unverified.
 
 ## Console formatting evidence (`0.5.1`)
 

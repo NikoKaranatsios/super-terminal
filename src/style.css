@@ -161,6 +161,8 @@ h1{margin:0 0 18px;font-size:13px;font-weight:500;color:var(--text)}
 #chat-output .console-marker{font-size:1.15em}
 #chat-output .console-meta{color:var(--terminal-bright-black);font-weight:400}
 #chat-output .console-label .console-meta{font-size:.9em}
+#chat-output .console-payload summary{padding:0;font:inherit;color:var(--muted)}
+#chat-output .console-payload pre{margin-top:.7em}
 #chat-output .console-user{--console-tone:var(--terminal-bright-blue)}
 #chat-output .console-user .console-body{color:var(--terminal-bright-white)}
 #chat-output .console-answer{--console-tone:var(--terminal-bright-green)}
@@ -182,10 +184,41 @@ h1{margin:0 0 18px;font-size:13px;font-weight:500;color:var(--text)}
 #chat-output strong{font-weight:700;color:var(--terminal-bright-white)}
 #chat-output em{font-style:italic;color:var(--terminal-magenta)}
 #chat-output code{font:inherit;color:var(--terminal-cyan)}
-#chat-output .console-heading{display:inline;color:var(--terminal-bright-green)}
+#chat-output .console-answer .console-body{max-width:85ch;line-height:1.65}
+#chat-output .console-markdown{white-space:normal}
+#chat-output .console-markdown>:first-child{margin-top:0}
+#chat-output .console-markdown>:last-child{margin-bottom:0}
+#chat-output .console-markdown p{margin:0 0 .8em}
+#chat-output .console-heading{display:block;color:var(--terminal-bright-green);font-size:1.05em;font-weight:700;line-height:1.4;margin:1.1em 0 .5em}
+#chat-output .console-markdown ul,#chat-output .console-markdown ol{margin:.5em 0 .9em;padding-left:1.8em}
+#chat-output .console-markdown li{padding-left:.15em;margin:.25em 0}
+#chat-output .console-markdown li>p{margin:.35em 0}
+#chat-output .console-markdown li>ul,#chat-output .console-markdown li>ol{margin:.25em 0}
+#chat-output .console-markdown li::marker{color:var(--terminal-blue)}
+#chat-output .console-markdown blockquote{border-left:2px solid var(--terminal-blue);margin:.8em 0;padding:0 1em;color:var(--muted)}
+#chat-output .console-markdown a{color:var(--terminal-bright-cyan);text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}
+#chat-output .console-markdown a:focus-visible{outline:1px solid var(--accent);outline-offset:2px}
+#chat-output .console-markdown mark{color:var(--terminal-bright-yellow);background:#534522;padding:.05em .2em;border-radius:2px;box-decoration-break:clone}
+#chat-output .console-markdown :not(pre)>code{background:var(--terminal-black);padding:.1em .3em;border-radius:2px;box-decoration-break:clone}
+#chat-output .console-markdown hr{border:0;border-top:1px solid var(--border);margin:1em 0}
+#chat-output .console-table{max-width:100%;overflow:auto;margin:.8em 0}
+#chat-output .console-table table{border-collapse:collapse;font-size:.92em;width:100%}
+#chat-output .console-table th,#chat-output .console-table td{padding:.4em .65em;border:1px solid var(--border);text-align:left;min-width:8ch}
+#chat-output .console-table th{background:var(--sidebar);color:var(--terminal-bright-white);font-weight:600}
+#chat-output .task-list-item{list-style:none}
+#chat-output .task-list-item-checkbox{accent-color:var(--terminal-green);margin:0 .5em 0 -1.5em;vertical-align:middle}
 #chat-output .console-code{margin:8px 0;padding:8px 12px;border-left:2px solid var(--terminal-blue);background:var(--terminal-black)}
+#chat-output .console-code pre{overflow:auto;white-space:pre;overflow-wrap:normal;line-height:1.5;tab-size:4}
 #chat-output .console-code code{color:var(--terminal-white)}
 #chat-output .console-language{display:block;color:var(--terminal-bright-black);font-size:.8em;margin-bottom:4px}
+#chat-output .hljs-keyword,#chat-output .hljs-selector-tag,#chat-output .hljs-literal{color:var(--terminal-magenta)}
+#chat-output .hljs-string,#chat-output .hljs-regexp,#chat-output .hljs-addition{color:var(--terminal-green)}
+#chat-output .hljs-number,#chat-output .hljs-symbol,#chat-output .hljs-bullet{color:var(--terminal-yellow)}
+#chat-output .hljs-title,#chat-output .hljs-attr,#chat-output .hljs-attribute,#chat-output .hljs-selector-class{color:var(--terminal-blue)}
+#chat-output .hljs-built_in,#chat-output .hljs-type,#chat-output .hljs-variable,#chat-output .hljs-name{color:var(--terminal-cyan)}
+#chat-output .hljs-comment,#chat-output .hljs-quote{color:var(--terminal-bright-black);font-style:italic}
+#chat-output .hljs-deletion{color:var(--terminal-red)}
+#chat-output .hljs-meta,#chat-output .hljs-section{color:var(--terminal-bright-cyan)}
 #chat-output .ansi-bold{font-weight:700}
 #chat-output .ansi-dim{opacity:.65}
 #chat-output .ansi-italic{font-style:italic}

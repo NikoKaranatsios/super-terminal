@@ -74,7 +74,7 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '256kb' }));
 app.get('/desktop-health', (req, res) => res.json({
-  product: 'super-terminal', protocol: 2, version: '0.5.1',
+  product: 'super-terminal', protocol: 2, version: '0.5.2',
   dataKey: createHash('sha256').update(path.resolve(dataDir)).digest('hex')
 }));
 function authorized(value) {

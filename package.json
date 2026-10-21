@@ -1,6 +1,6 @@
 {
   "name": "super-terminal",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "productName": "Super Terminal",
   "main": "desktop/main.cjs",
   "private": true,
@@ -23,6 +23,10 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "express": "^5.1.0",
+    "highlight.js": "^11.12.0",
+    "markdown-it": "^15.0.3",
+    "markdown-it-mark": "^4.0.0",
+    "markdown-it-task-lists": "^2.1.1",
     "node-pty": "^1.1.0",
     "playwright": "^1.64.1",
     "ws": "^8.18.3"

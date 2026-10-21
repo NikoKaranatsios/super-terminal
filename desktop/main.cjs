@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, nativeTheme, screen, utilityProcess, ipcMain, Notification } = require('electron');
+const { app, BrowserWindow, Menu, dialog, nativeTheme, screen, utilityProcess, ipcMain, Notification, shell } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -6,6 +6,7 @@ const { randomUUID } = require('node:crypto');
 const { execFile } = require('node:child_process');
 const { startBackend } = require('./backend.cjs');
 const { watchActivity } = require('./notifications.cjs');
+const { webLink } = require('../shared/web-links.cjs');
 
 const root = path.resolve(__dirname, '..');
 const dataDir = process.env.SUPER_TERMINAL_DATA || path.join(os.homedir(), '.super-terminal');
@@ -156,6 +157,11 @@ if (primary) app.whenReady().then(async () => {
       createWindow({ window: randomUUID(), view: context.viewId, environment: context.environment });
     });
     ipcMain.handle('desktop-test-notification', event => trusted(event) && notify({ kind: 'test' }));
+    ipcMain.handle('desktop-open-link', async (event, value) => {
+      const url = webLink(value);
+      if (!trusted(event) || !url) return false;
+      await shell.openExternal(url); return true;
+    });
     watcher = watchActivity({ origin: backend.origin, deliver: notify });
     setMenu(); await createWindow();
   } catch (error) { dialog.showErrorBox('Super Terminal could not start', error.message); app.quit(); }

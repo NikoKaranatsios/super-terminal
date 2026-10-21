@@ -19,8 +19,9 @@ test('fixture renderer keeps work records, process controls, task views, chat sc
       {type:'item.completed',name:'command_execution',command:'npm test',output:'\u001b[32mPASS\u001b[0m · example checks\n\u001b[2mCompleted fixture verification\u001b[22m',exitCode:0,status:'completed'},
       {kind:'warning',text:'The remote environment has not been checked.'},
       {kind:'error',text:'Example unavailable source; other checks continued.'},
-      {kind:'skill',name:'Example review',text:'Applied the project review instructions.'}
-    ],answer:'# Review complete\n**Local checks passed.** The remote check remains *unverified*.\n\nUse `npm test` to repeat the checks.\n```sh\nnpm test\n```'}],assessments:{},loop:{state:'stopped'}},
+      {kind:'skill',name:'Example review',text:'Applied the project review instructions.'},
+      {name:'agent_message',itemId:'fixture-response',seq:1,text:JSON.stringify({answer:'Local checks passed.',actions:[],assessments:[]})}
+    ],answer:'## Review complete\n\n**Local checks passed.**\n\n- [x] Build verified\n- [ ] ==Remote review needed==\n\n| Check | Result |\n| --- | --- |\n| Local | Passed |\n| Remote | Unverified |\n\n```json\n{"ready": true}\n```\n\n[Review notes](https://example.com/review)'}],assessments:{},loop:{state:'stopped'}},
     projects:[{id:'project',name:'Example project',host:'local',cwd:'/example'}],
     tasks:[{id:'task',projectId:'project',title:'Verify example output',status:'doing',notes:'Run the fixture check.',evidence:['Fixture evidence'],agentId:'agent',scope:{workSessionId:'work',projectId:'legacy-project',goalId:'task'}}],
     workSessions:[{id:'work',title:'Example work',status:'active',projects:[]},{id:'saved',title:'Saved work',status:'wrapped',projects:[]}],
@@ -64,7 +65,19 @@ test('fixture renderer keeps work records, process controls, task views, chat sc
     assert.equal(await page.locator('#chat-output .console-error .console-body').evaluate(el=>getComputedStyle(el).color),'rgb(231, 137, 137)');
     assert.equal(await page.locator('#chat-output .console-heading').evaluate(el=>getComputedStyle(el).fontWeight),'700');
     assert.equal(await page.locator('#chat-output .ansi-dim').evaluate(el=>getComputedStyle(el).opacity),'0.65');
-    assert.equal(await page.locator('#chat-output .console-code').innerText(),'sh\nnpm test\n');
+    assert.equal(await page.locator('#chat-output .console-code').innerText(),'json\n{"ready": true}\n');
+    assert.equal(await page.locator('#chat-output mark').innerText(),'Remote review needed');
+    assert.equal(await page.locator('#chat-output .task-list-item-checkbox:disabled').count(),2);
+    assert.equal(await page.locator('#chat-output table tbody tr').count(),2);
+    assert.equal(await page.locator('#chat-output .hljs-literal').evaluate(el=>getComputedStyle(el).color),'rgb(198, 160, 216)');
+    await page.evaluate(()=>{window.openedFixtureLinks=[];window.superTerminalDesktop={openLink:async url=>{window.openedFixtureLinks.push(url);return true;}};});
+    await page.locator('#chat-output a').click();
+    assert.deepEqual(await page.evaluate(()=>window.openedFixtureLinks),['https://example.com/review']);
+    await page.locator('#chat-output .console-payload summary').click();
+    state.coordinator.history[0].trace.push({kind:'commentary',text:'Fixture update arrived.'});
+    await page.getByText('Fixture update arrived.',{exact:true}).waitFor();
+    assert.equal(await page.locator('#chat-output .console-payload').evaluate(el=>el.open),true,'expanded output must remain open when progress refreshes');
+    await page.locator('#chat-output .console-payload summary').click();
     if(process.env.SUPER_TERMINAL_CONSOLE_SCREENSHOT){await page.screenshot({path:process.env.SUPER_TERMINAL_CONSOLE_SCREENSHOT});await page.setViewportSize({width:820,height:650});await page.screenshot({path:process.env.SUPER_TERMINAL_CONSOLE_SCREENSHOT.replace(/\.png$/, '-narrow.png')});await page.setViewportSize({width:1150,height:820});}
     await page.selectOption('#working-session-select','saved');
     assert.equal(requests.filter(r=>r.method==='PATCH').length,0,'browsing must not resume a session');

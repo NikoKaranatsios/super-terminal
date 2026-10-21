@@ -8,7 +8,9 @@ Sources: [renderer](../../src/app.js), [workspace model](../../src/workspace.mjs
 
 **Current behavior.** Split panes, pointer/keyboard resizing, tab focus, sidebar sizing, and main-window layout restoration exist. Extra native windows have individual workspace keys, but their set is not recreated after quitting; one saved bounds file is shared. A view ID can appear in only one pane per window. Opening an already-visible view focuses it. Dragging tabs between panes is not implemented.
 
-Conductor output uses the shared [terminal palette](../../src/terminal-theme.mjs) and a [text formatter](../../src/console-format.mjs) for normal/bright ANSI colors, indexed/RGB colors, bold/dim/italic/underlined text, and basic prose/code emphasis. Event labels retain their meaning alongside color. Only text styling is interpreted; terminal cursor, clipboard, title and hyperlink controls are ignored. [Formatter tests](../../test/console-format.test.mjs) and the renderer fixture verify escaping, resets, event tones and computed styles. This is saved-output formatting, not a terminal screen emulator.
+Conductor output uses the shared [terminal palette](../../src/terminal-theme.mjs) and [text formatter](../../src/console-format.mjs) for ANSI colors and emphasis. The [Markdown renderer](../../src/markdown.mjs) uses CommonMark parsing plus tables, strikethrough, read-only task lists and `==highlight==`. Named code blocks use a bounded local syntax highlighter; unknown/large blocks stay literal. Replies use readable paragraph/list spacing and bounded line lengths. Structured response JSON remains expandable; ordinary commentary and tool output stay visible.
+
+Raw HTML is escaped, images become links without automatic fetching, and only explicit HTTP(S) links can open in the system browser through the validated desktop bridge. Terminal cursor, clipboard, title and hyperlink escape controls are ignored. [Formatter tests](../../test/console-format.test.mjs) and the renderer fixture verify safety, semantic rendering, computed styles and link dispatch. This is saved-output formatting, not a terminal screen emulator.
 
 **Work.**
 
