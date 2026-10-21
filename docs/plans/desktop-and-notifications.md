@@ -8,6 +8,8 @@ Sources: [renderer](../../src/app.js), [workspace model](../../src/workspace.mjs
 
 **Current behavior.** Split panes, pointer/keyboard resizing, tab focus, sidebar sizing, and main-window layout restoration exist. Extra native windows have individual workspace keys, but their set is not recreated after quitting; one saved bounds file is shared. A view ID can appear in only one pane per window. Opening an already-visible view focuses it. Dragging tabs between panes is not implemented.
 
+Conductor output uses the shared [terminal palette](../../src/terminal-theme.mjs) and a [text formatter](../../src/console-format.mjs) for normal/bright ANSI colors, indexed/RGB colors, bold/dim/italic/underlined text, and basic prose/code emphasis. Event labels retain their meaning alongside color. Only text styling is interpreted; terminal cursor, clipboard, title and hyperlink controls are ignored. [Formatter tests](../../test/console-format.test.mjs) and the renderer fixture verify escaping, resets, event tones and computed styles. This is saved-output formatting, not a terminal screen emulator.
+
 **Work.**
 
 - Run native macOS checks for separate windows, simultaneous terminal input, menu shortcuts, pane selection, nested splits, resizing, fullscreen/minimize, and clipboard behavior. Verify that shortcuts do not unintentionally interfere with the provider CLI.

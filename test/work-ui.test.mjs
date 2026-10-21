@@ -14,7 +14,13 @@ test('fixture renderer keeps work records, process controls, task views, chat sc
   await build({entryPoints:['src/app.js'],bundle:true,format:'esm',outfile:path.join(dir,'app.js'),logLevel:'silent'});
   const state={
     hosts:[],hostNames:{},remote:[],preferences:{fontSize:13,automaticBriefing:false,notifyOnFinish:false},activity:[],messages:[],prompts:{codex:'',claude:'',grok:''},defaultCwd:'/example',
-    coordinator:{running:false,history:[],assessments:{},loop:{state:'stopped'}},
+    coordinator:{running:false,history:[{prompt:'Check the example project and summarize the result.',status:'complete',trace:[
+      {kind:'commentary',text:'Checking **the current changes** before running `npm test`.'},
+      {type:'item.completed',name:'command_execution',command:'npm test',output:'\u001b[32mPASS\u001b[0m · example checks\n\u001b[2mCompleted fixture verification\u001b[22m',exitCode:0,status:'completed'},
+      {kind:'warning',text:'The remote environment has not been checked.'},
+      {kind:'error',text:'Example unavailable source; other checks continued.'},
+      {kind:'skill',name:'Example review',text:'Applied the project review instructions.'}
+    ],answer:'# Review complete\n**Local checks passed.** The remote check remains *unverified*.\n\nUse `npm test` to repeat the checks.\n```sh\nnpm test\n```'}],assessments:{},loop:{state:'stopped'}},
     projects:[{id:'project',name:'Example project',host:'local',cwd:'/example'}],
     tasks:[{id:'task',projectId:'project',title:'Verify example output',status:'doing',notes:'Run the fixture check.',evidence:['Fixture evidence'],agentId:'agent',scope:{workSessionId:'work',projectId:'legacy-project',goalId:'task'}}],
     workSessions:[{id:'work',title:'Example work',status:'active',projects:[]},{id:'saved',title:'Saved work',status:'wrapped',projects:[]}],
@@ -52,6 +58,14 @@ test('fixture renderer keeps work records, process controls, task views, chat sc
     const page=await browser.newPage({viewport:{width:1150,height:820}});page.on('pageerror',e=>errors.push(e.message));
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     await page.locator('#working-session-select').waitFor();
+    await page.click('#conductor-nav');
+    await page.locator('#chat-output .console-heading').waitFor();
+    assert.equal(await page.locator('#chat-output .console-command').evaluate(el=>getComputedStyle(el).color),'rgb(171, 225, 218)');
+    assert.equal(await page.locator('#chat-output .console-error .console-body').evaluate(el=>getComputedStyle(el).color),'rgb(231, 137, 137)');
+    assert.equal(await page.locator('#chat-output .console-heading').evaluate(el=>getComputedStyle(el).fontWeight),'700');
+    assert.equal(await page.locator('#chat-output .ansi-dim').evaluate(el=>getComputedStyle(el).opacity),'0.65');
+    assert.equal(await page.locator('#chat-output .console-code').innerText(),'sh\nnpm test\n');
+    if(process.env.SUPER_TERMINAL_CONSOLE_SCREENSHOT){await page.screenshot({path:process.env.SUPER_TERMINAL_CONSOLE_SCREENSHOT});await page.setViewportSize({width:820,height:650});await page.screenshot({path:process.env.SUPER_TERMINAL_CONSOLE_SCREENSHOT.replace(/\.png$/, '-narrow.png')});await page.setViewportSize({width:1150,height:820});}
     await page.selectOption('#working-session-select','saved');
     assert.equal(requests.filter(r=>r.method==='PATCH').length,0,'browsing must not resume a session');
     await page.selectOption('#working-session-select','work');

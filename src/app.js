@@ -2,6 +2,8 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import './style.css';
 import { Workspace } from './workspace.mjs';
+import { terminalTheme, applyTerminalPalette } from './terminal-theme.mjs';
+import { conductorTurnMarkup, traceMarkup } from './console-format.mjs';
 import { agentTitle, agentContext, processLabel, canControl, projectWork, overviewMarkup, projectMarkup, taskMarkup, teamsMarkup, mergeOutput } from './work-views.mjs';
 
 const $ = s => document.querySelector(s);
@@ -17,7 +19,7 @@ const workspaceKey = 'workspace:'+(initial.get('window') || 'main');
 const layout = new Workspace(localStorage.getItem(workspaceKey));
 if(initial.get('environment')) environment=initial.get('environment');
 let restoring=false, workspaceReady=false;
-const terminalTheme={background:'#101214',foreground:'#d8dfda',cursor:'#96d9a9',cursorAccent:'#101214',selectionBackground:'#345143',black:'#171b1e',red:'#e78989',green:'#96d9a9',yellow:'#dfc68f',blue:'#90b5e3',magenta:'#c6a0d8',cyan:'#87c9c2',white:'#d8dfda',brightBlack:'#818b85',brightRed:'#f2a0a0',brightGreen:'#b0ecc0',brightYellow:'#f0d9a4',brightBlue:'#b0cef4',brightMagenta:'#dfb7ee',brightCyan:'#abe1da',brightWhite:'#f3f7f4'};
+applyTerminalPalette(document.documentElement);
 function saveWorkspace(){localStorage.setItem(workspaceKey,layout.serialize());}
 function tabLabel(id){const s=[...(state?.sessions||[]),...(state?.history||[])].find(s=>s.id===id);return id==='conductor'?'Conductor':id==='settings'?'Settings':id==='activity'?'Activity':id==='overview'?'All projects':id==='teams'?'Teams':id.startsWith('messages:')?id.slice(9)||'Team messages':s?agentTitle(s,state):views.get(id)?.title || 'Terminal';}
 function focusPane(paneId){const pane=layout.focus(paneId);selected=pane.active || '';for(const el of document.querySelectorAll('.pane'))el.classList.toggle('focused',el.dataset.pane===paneId);document.title=(tabLabel(selected)||'Super Terminal')+' — Super Terminal';if(state)sidebar();saveWorkspace();}
@@ -178,18 +180,13 @@ function renderChat() {
   const signature = JSON.stringify([status.history,status.trace,status.events]);
   if (output.dataset.signature !== signature) {
     const nearBottom = output.scrollHeight-output.scrollTop-output.clientHeight < 100;
-    output.innerHTML = status.history.map(t => `${t.automatic ? `<div class="line muted">Automatic Conductor round${t.createdAt?' · '+escape(new Date(t.createdAt).toLocaleTimeString()):''}</div>` : `<div class="line"><span class="speaker user">you</span>${escape(t.prompt)}</div>`}${(t.events || t.trace || []).map(traceMarkup).join('')}${t.traceOmitted?`<div class="line muted">${escape(t.traceOmitted)} earlier trace event${t.traceOmitted===1?'':'s'} omitted from this bounded trace.</div>`:''}${t.answer ? `<div class="line"><span class="speaker assistant">${t.status === 'error' ? 'error' : 'conductor'}</span>${escape(t.answer)}</div>` : ''}`).join('') + (status.trace || status.events || []).map(traceMarkup).join('') || '<div class="muted">Describe your work here. Conductor can organize projects and tasks, assemble teams, and manage agents. No goal forms are needed.</div>';
+    output.innerHTML = status.history.map(conductorTurnMarkup).join('') + (status.trace || status.events || []).map(traceMarkup).join('') || '<div class="muted">Describe your work here. Conductor can organize projects and tasks, assemble teams, and manage agents. No goal forms are needed.</div>';
     output.dataset.signature = signature; if (nearBottom) output.scrollTop = output.scrollHeight;
   }
   const reviewed = state.history.filter(s => assessment(s)).length;
   $('#chat-progress').textContent = status.running ? (status.phase || 'Conductor is working…') : `${reviewed} / ${state.history.length} conversations reviewed`;
   $('#chat-progress').title = 'Response generation, the automatic loop, agent processes, and task progress have separate states.';
   $('#send-chat').disabled = status.running; $('#review-next').disabled = status.running; $('#stop-chat').hidden = !status.running;
-}
-function traceMarkup(event) {
-  if(typeof event==='string')return `<div class="line trace-line">${escape(event)}</div>`;
-  const text=[event.command,event.text || event.message,event.output,event.result&&JSON.stringify(event.result,null,2),event.usage&&JSON.stringify(event.usage,null,2)].filter(value=>value!=null&&value!=='').map(value=>typeof value==='string'?value:JSON.stringify(value,null,2)).join('\n');
-  return `<div class="line trace-line"><span class="speaker">${escape(event.kind || event.type || event.role || 'activity')}${event.name?' · '+escape(event.name):''}${event.status?' · '+escape(event.status):''}${event.exitCode!=null?' · exit '+escape(event.exitCode):''}${event.at?' · '+escape(new Date(event.at).toLocaleTimeString()):''}</span><pre>${escape(text || JSON.stringify(event,null,2))}</pre></div>`;
 }
 async function sendChat(prompt, automatic = false) {
   if (state.coordinator.running) return;

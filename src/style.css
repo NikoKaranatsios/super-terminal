@@ -155,8 +155,43 @@ h1{margin:0 0 18px;font-size:13px;font-weight:500;color:var(--text)}
 .loop-heading strong{font-weight:500;color:var(--text)}
 .loop-heading button{padding:3px 5px;min-height:24px;border:1px solid var(--border);margin-left:4px}
 #conductor-loop .work-hint{margin-bottom:0}
-.trace-line{border-left:1px solid #46504b;padding-left:10px;font-size:11px;color:#b4c3ba}
-.trace-line pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+#chat-output{line-height:1.5;color:var(--terminal-foreground)}
+#chat-output .line{margin-bottom:20px;white-space:normal}
+#chat-output .console-label{display:flex;align-items:baseline;flex-wrap:wrap;gap:7px;margin-bottom:5px;font-size:.85em;font-weight:600;color:var(--console-tone,var(--terminal-bright-black))}
+#chat-output .console-marker{font-size:1.15em}
+#chat-output .console-meta{color:var(--terminal-bright-black);font-weight:400}
+#chat-output .console-label .console-meta{font-size:.9em}
+#chat-output .console-user{--console-tone:var(--terminal-bright-blue)}
+#chat-output .console-user .console-body{color:var(--terminal-bright-white)}
+#chat-output .console-answer{--console-tone:var(--terminal-bright-green)}
+#chat-output .console-commentary{--console-tone:var(--terminal-blue)}
+#chat-output .console-commentary .console-body{color:var(--terminal-white)}
+#chat-output .console-tool{--console-tone:var(--terminal-cyan)}
+#chat-output .console-result{--console-tone:var(--terminal-green)}
+#chat-output .console-skill{--console-tone:var(--terminal-bright-magenta)}
+#chat-output .console-success{--console-tone:var(--terminal-bright-green)}
+#chat-output .console-warning{--console-tone:var(--terminal-bright-yellow)}
+#chat-output .console-error{--console-tone:var(--terminal-bright-red)}
+#chat-output .console-warning .console-body{color:var(--terminal-yellow)}
+#chat-output .console-error .console-body{color:var(--terminal-red)}
+#chat-output .trace-line{border-left:1px solid var(--console-tone,var(--border));padding-left:10px;font-size:.92em}
+#chat-output .console-body{white-space:pre-wrap;overflow-wrap:anywhere}
+#chat-output pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+#chat-output .console-command{color:var(--terminal-bright-cyan);font-weight:600;margin-bottom:5px}
+#chat-output .console-command-marker{color:var(--terminal-bright-black);font-weight:400}
+#chat-output strong{font-weight:700;color:var(--terminal-bright-white)}
+#chat-output em{font-style:italic;color:var(--terminal-magenta)}
+#chat-output code{font:inherit;color:var(--terminal-cyan)}
+#chat-output .console-heading{display:inline;color:var(--terminal-bright-green)}
+#chat-output .console-code{margin:8px 0;padding:8px 12px;border-left:2px solid var(--terminal-blue);background:var(--terminal-black)}
+#chat-output .console-code code{color:var(--terminal-white)}
+#chat-output .console-language{display:block;color:var(--terminal-bright-black);font-size:.8em;margin-bottom:4px}
+#chat-output .ansi-bold{font-weight:700}
+#chat-output .ansi-dim{opacity:.65}
+#chat-output .ansi-italic{font-style:italic}
+#chat-output .ansi-underline{text-decoration-line:underline}
+#chat-output .ansi-strike{text-decoration-line:line-through}
+#chat-output .ansi-underline.ansi-strike{text-decoration-line:underline line-through}
 .process-controls{display:flex;align-items:center;gap:7px;padding:0 12px 5px;font-size:10px;flex-wrap:wrap;border-bottom:1px solid var(--border);flex-shrink:0}
 .process-context{color:var(--muted);flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .process-controls button{padding:3px 4px;border:1px solid var(--border);min-height:24px}

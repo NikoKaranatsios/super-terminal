@@ -1,8 +1,16 @@
 # Verification evidence and remaining checks
 
-Current feature build: package `0.5.0`, consolidated at `52d2e41` from `f4252a8` and the existing `dev` reliability fixes. No record implies verification of every personal agent, provider version or SSH environment.
+Current build: package `0.5.1`, adding Conductor console formatting to the `0.5.0` feature build consolidated at `52d2e41`. No record implies verification of every personal agent, provider version or SSH environment.
 
-## Current feature evidence
+## Console formatting evidence (`0.5.1`)
+
+- Five [formatter tests](../test/console-format.test.mjs) pass: ANSI colors and resets, text emphasis, indexed/RGB values, escaped markup, ignored terminal side-effect controls, literal code blocks and semantic event tones.
+- The [renderer fixture](../test/work-ui.test.mjs) passes with computed color, weight and dimness checks, while retaining session, task, team and output navigation coverage. A wide split-pane layout was visually inspected using synthetic output. No personal transcript was used as a fixture.
+- `npm run build` and `git diff --check` pass. This frontend change does not extend the native or provider acceptance claims below.
+- Installed `0.5.1`; strict deep signature verification passed and all 36 checked runtime/source/asset files match the build. The health endpoint reports `0.5.1` with protocol `2`; all three pre-install managed tmux sessions survived. The generated app copy was consumed by the installer.
+- Native app reopened successfully. Its Conductor pane was visually inspected: green role labels, bright bold emphasis, cyan inline code and subdued metadata render in the existing split workspace. This verifies the console appearance only, not the broader lifecycle, multiwindow or notification acceptance items.
+
+## Feature evidence (`0.5.0`)
 
 | Check | Result and limit |
 | --- | --- |
