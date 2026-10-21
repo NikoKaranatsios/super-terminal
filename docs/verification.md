@@ -1,6 +1,6 @@
 # Verification evidence and remaining checks
 
-Current feature build: package `0.5.0`, based on `f4252a8`. No record implies verification of every personal agent, provider version or SSH environment.
+Current feature build: package `0.5.0`, consolidated at `52d2e41` from `f4252a8` and the existing `dev` reliability fixes. No record implies verification of every personal agent, provider version or SSH environment.
 
 ## Current feature evidence
 
@@ -12,7 +12,9 @@ Current feature build: package `0.5.0`, based on `f4252a8`. No record implies ve
 | Scoped continuous coordination | Fake-model tests cover cadence, zero-call idle collection, pause/stop, stale in-flight completion, backoff, narrow scope, usage, traces, duplicate actions and concurrent reports. Policy tests reject conflicting task/team aliases, inactive goals and out-of-scope targets. |
 | Tasks and lifecycle | Tests cover migration, legacy goal synchronization, evidence requirements, nested scoped task creation, idempotent replay, stale grants/revisions, helper outboxes, project-root containment, team retries, process identity, credential revocation and partial remote cleanup. |
 | Output and interface | Local/remote output parser parity, record-boundary pagination and stable IDs pass. Fixture browser checks cover working-session/process separation, three task layers, teams, chat scope, partial failures, output refresh and recovery. Wide and narrow layouts were inspected using sanitized data. |
-| Native UI automation | Binding to the installed application timed out. Native interactive and banner acceptance remains unverified; the passing runtime/fixture checks do not replace it. |
+| Package/install | Installed `0.5.0`; health reports protocol `2`. All 34 runtime/source/asset files checked match the tested build. Packaging intentionally omits source maps and the lockfile and prunes development package metadata. Strict deep code-signature verification passed. One authoritative app remains in Applications and no generated app bundle remains in release output. |
+| Existing terminals | All three managed tmux sessions recorded before replacement remained present after installation. Personal agent lifecycle controls were not exercised for testing. |
+| Native UI observation | The installed app opened and its accessibility tree exposed the working-session sidebar, project/team navigation, and saved commentary/tool output with an older-output control. Subsequent navigation was blocked by the automation connection reporting `cgWindowNotFound`, including after reconnect/reset. Full native interaction and banner acceptance remain unverified; the passing runtime/fixture checks do not replace them. |
 
 ## Earlier baseline evidence (`0.4.1`)
 
