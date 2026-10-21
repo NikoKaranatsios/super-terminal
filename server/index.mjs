@@ -10,11 +10,14 @@ import { createStore, dataDir, home, shell, env, socket, tmux, tmuxRun, which, q
 import { History, EnvironmentHistory, publicHistory, matchHistory } from './history.mjs';
 import { tmuxSessions, externalTerminals, scanRemote, remoteRead } from './discovery.mjs';
 import { AgentBrowsers } from './browsers.mjs';
-import { performAction } from './conductor-actions.mjs';
-import { Coordinator } from './coordinator.mjs';
+import { performAction, launchTeamMembers } from './conductor-actions.mjs';
+import { Coordinator, collectWork } from './coordinator.mjs';
+import { validateAutonomousAction } from './conductor-policy.mjs';
 import { ActivityMonitor } from './activity.mjs';
 import { allowedHosts, connections, defaultPrompt, prepareBridge, startupPrompt, publicSession } from './agent-platform.mjs';
-import { parseTopics, workProgress, resolveScope, scopeContext, canCommunicate, carryProjects, mergeProjects, wrapSummary } from './work-sessions.mjs';
+import { parseTopics, workProgress, resolveScope, scopeContext, canCommunicate, carryProjects, mergeProjects, wrapSummary, resolveLaunchLocation } from './work-sessions.mjs';
+import { initializeTasks, createTask, updateTask, recordTaskEvent, taskSummary, taskDescendsFrom } from './tasks.mjs';
+import { controlAgent, removeAgent } from './lifecycle.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const port = Number(process.env.PORT || 4317);
@@ -28,6 +31,7 @@ store.state.teams ||= [];
 store.state.projects ||= [];
 store.state.lifecycle ||= {};
 store.state.workSessions ||= [];
+initializeTasks(store.state);
 store.state.prompts ||= Object.fromEntries(['codex', 'claude', 'grok'].map(p => [p, defaultPrompt]));
 store.save();
 const remoteCache = new Map();
@@ -38,7 +42,21 @@ const activity = new ActivityMonitor(store);
 const browsers = new AgentBrowsers();
 const coordinator = new Coordinator(store);
 coordinator.liveReader = liveSessions;
-coordinator.actionHandler = action => performAction(action, { store, liveSessions, createSession, allowedHosts, sendMessage, history, invalidate: () => { externalTime = 0; for(const host of allowedHosts) refreshRemote(host); } });
+const invalidate = () => { externalTime = 0; if (process.env.SUPER_TERMINAL_TEST !== '1') for(const host of allowedHosts) refreshRemote(host); };
+const lifecycleContext = { store, allowedHosts, closeBrowser: id => browsers.action(id, { action: 'close' }), invalidate };
+coordinator.configure({ history });
+coordinator.actionHandler = async (action, metadata = {}) => {
+  if (metadata.autonomous) {
+    if (coordinator.status().loop.state !== 'running') throw new Error('Continuous coordination has been paused or stopped.');
+    validateAutonomousAction(store.state, action, collectWork(store.state, await liveSessions()).scope);
+  }
+  return performAction(action, { ...lifecycleContext, ...metadata, liveSessions, createSession, allowedHosts, sendMessage, promptAgent, updateAgent: (id, patch) => updateManagedAgent(id, patch, 'conductor'), history,
+    notify: action => {
+      const task = store.state.tasks.find(t => t.id === (action.taskId || action.target));
+      const agent = store.state.sessions.find(s => s.id === action.target);
+      return activity.notify({ title: action.title || action.name || 'Conductor', text: action.text || action.body, target: task ? 'task:' + task.id : action.target || 'conductor', host: agent?.host || 'local' });
+    } });
+};
 const attachments = new Set();
 const providers = ['codex', 'claude', 'grok', 'shell'];
 const app = express();
@@ -56,7 +74,7 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '256kb' }));
 app.get('/desktop-health', (req, res) => res.json({
-  product: 'super-terminal', protocol: 1,
+  product: 'super-terminal', protocol: 2, version: '0.5.0',
   dataKey: createHash('sha256').update(path.resolve(dataDir)).digest('hex')
 }));
 function authorized(value) {
@@ -64,7 +82,7 @@ function authorized(value) {
 }
 app.use('/api', (req, res, next) => {
   if (req.path === '/agent' && req.method === 'POST') {
-    req.agent = store.state.sessions.find(s => s.agentToken && s.agentToken === req.headers['x-super-terminal-agent']);
+    req.agent = store.state.sessions.find(s => s.agentToken && s.agentToken === req.headers['x-super-terminal-agent'] && !s.enrollmentRevokedAt && s.status !== 'stopped' && store.state.lifecycle[s.id] !== 'stopped');
     if (req.agent) return next();
   }
   return authorized(req.headers['x-super-terminal']) ? next() : res.status(403).json({ error: 'Reload Super Terminal to reconnect.' });
@@ -106,7 +124,7 @@ app.get('/api/state', route(async (req, res) => {
     preferences: store.state.preferences, activity: store.state.activity,
     home, defaultCwd: path.join(home, 'Projects'), prompts: store.state.prompts,
     coordinator: coordinator.status(), messages: store.state.messages.slice(-100),
-    teams: store.state.teams, projects: store.state.projects,
+    teams: store.state.teams, projects: store.state.projects, tasks: store.state.tasks,
     workSessions: store.state.workSessions.map(s => ({ ...s, progress: workProgress(s) })),
     browsers: [...browsers.contexts.keys()],
     providers: providers.map(id => ({ id, available: id === 'shell' || !!which(id) })),
@@ -115,9 +133,21 @@ app.get('/api/state', route(async (req, res) => {
 }));
 app.get('/api/messages', (req, res) => res.json(store.state.messages.filter(m => !req.query.group || m.group === req.query.group)));
 app.get('/api/activity', (req, res) => res.json({ events: store.state.activity, enabled: store.state.preferences.notifyOnFinish }));
-app.get('/api/history/:id', route(async (req, res) => res.json(await history.transcript(req.params.id))));
+app.get('/api/history/:id', route(async (req, res) => res.json(await history.transcript(req.params.id, req.query.cursor))));
+app.get('/api/tasks', (req, res) => res.json(taskSummary(store.state, { projectId: req.query.projectId, workSessionId: req.query.workSessionId })));
+app.post('/api/tasks', route(async (req, res) => { const task = createTask(store.state, req.body); store.save(); res.json(task); }));
+app.patch('/api/tasks/:id', route(async (req, res) => { const task = updateTask(store.state, req.params.id, req.body); store.save(); res.json(task); }));
 
+const launchLocks = new Map();
 async function createSession(body) {
+  const key = body.taskId || (!body.role && (body.scope?.goalId || body.goalId)) || body.historyId;
+  if (!key) return createSessionUnlocked(body);
+  const previous = launchLocks.get(key) || Promise.resolve();
+  const operation = previous.catch(() => {}).then(() => createSessionUnlocked(body));
+  launchLocks.set(key, operation);
+  try { return await operation; } finally { if (launchLocks.get(key) === operation) launchLocks.delete(key); }
+}
+async function createSessionUnlocked(body) {
   let provider = body.provider || 'shell';
   if (!providers.includes(provider)) throw new Error('Unknown agent.');
   let original = body.historyId ? await history.get(body.historyId) : null;
@@ -127,19 +157,27 @@ async function createSession(body) {
     const previous = store.state.sessions.find(s => s.historyId === original.id);
     if (previous && (await tmuxSessions()).some(t => t.name === previous.tmuxName)) return publicSession(previous);
   }
-  const host = original?.host || (body.host && body.host !== 'local' ? validHost(body.host) : 'local');
+  const location = resolveLaunchLocation(store.state, { ...body, ...(original ? { host: original.host, cwd: original.cwd } : {}) }, allowedHosts);
+  const { host, cwd } = location;
   if (host !== 'local' && !allowedHosts.includes(host)) throw new Error('This SSH connection is not enabled in your local connections.json.');
   if (original && body.host && body.host !== original.host) throw new Error('Resume a conversation in its original environment.');
-  const cwd = host === 'local' ? localDirectory(body.cwd || original?.cwd || home) : text(body.cwd || original?.cwd || '~', 2000);
   const repo = host === 'local' ? repository(cwd) : null;
-  const group = text(body.group || original?.group || path.basename(repo || cwd) || 'Loose sessions', 120);
-  const title = text(body.title || original?.title || `${provider === 'shell' ? 'Terminal' : provider} · ${path.basename(cwd)}`, 200);
+  const project = store.state.projects.find(p => p.id === location.projectId);
+  const team = store.state.teams.find(t => t.id === location.teamId || t.name === body.group);
+  const group = text(team?.name || body.group || original?.group || path.basename(repo || cwd) || 'Loose sessions', 120);
+  const assigned = store.state.tasks.find(t => t.id === (location.taskId || (!body.role && location.scope?.goalId)));
+  if (assigned) {
+    const existing = (await liveSessions()).find(s => s.kind === 'managed' && s.taskId === assigned.id && !['stopped','exited'].includes(s.status) && !s.enrollmentRevokedAt);
+    if (existing) return existing;
+  }
+  const missionTitle = body.task?.trim().split('\n')[0].replace(/^#+\s*/, '').slice(0, 160);
+  const title = text(String(body.title || assigned?.title || missionTitle || original?.title || `${provider === 'shell' ? 'Terminal' : 'Agent'} · ${project?.name || path.basename(cwd)}`).slice(0, 200), 200);
   const id = randomUUID();
   const tmuxName = `st-${id.slice(0, 12)}`;
-  const session = { id, remoteUser: host !== 'local' ? original?.owner || null : null, projectId: store.state.projects.some(p => p.id === body.projectId) ? body.projectId : null, kind: 'managed', provider, host, cwd, group, title, role: text(body.role || '', 100), tmuxName, historyId: original?.id || null, createdAt: new Date().toISOString(), status: 'running', agentToken: randomBytes(32).toString('hex') };
-  session.scope = resolveScope(store.state.workSessions, body.scope);
+  const session = { id, remoteUser: host !== 'local' ? original?.owner || null : null, projectId: location.projectId, teamId: team?.id || null, taskId: assigned?.id || null, assignmentRevision: 0, attemptId: randomUUID(), kind: 'managed', provider, host, cwd, group, title, role: text(body.role || '', 100), tmuxName, historyId: original?.id || null, createdAt: new Date().toISOString(), status: 'running', agentToken: randomBytes(32).toString('hex') };
+  session.scope = location.scope;
+  session.mission = typeof body.task === 'string' ? body.task.slice(0, 12000) : team?.mission || assigned?.notes || '';
   const bridge = await prepareBridge(session, root, port);
-  const team = store.state.teams.find(t => t.name === group);
   let task = typeof body.task === 'string' && body.task.trim() ? body.task.slice(0, 12000) : team?.mission || '';
   if (session.scope) task += `\n\nAssignment scope:\n${JSON.stringify(scopeContext(store.state.workSessions, session.scope), null, 2)}\nWork at your assigned layer: session-level agents coordinate the whole session, project-level agents own project outcomes, and goal-level agents focus on that goal. Coordinate with peers before overlapping edits. Report completed work and blockers through the mailbox; never mark success without verification.`;
   const role = typeof body.prompt === 'string' ? body.prompt.slice(0, 12000) : store.state.prompts[provider] || defaultPrompt;
@@ -169,35 +207,73 @@ async function createSession(body) {
   await tmuxRun(['set-option', '-t', tmuxName, 'mouse', 'on']);
   await tmuxRun(['set-option', '-t', tmuxName, 'history-limit', '50000']);
   store.state.sessions.push(session);
+  if (assigned) updateTask(store.state, assigned.id, { agentId: session.id });
+  else if (provider !== 'shell' && session.mission.trim()) {
+    let taskProject = project || store.state.projects.find(p => p.host === host && p.cwd === (repo || cwd));
+    if (!taskProject) { taskProject = { id: randomUUID(), name: path.basename(repo || cwd) || group, host, cwd: repo || cwd, status: 'active', notes: '', createdAt: session.createdAt }; store.state.projects.push(taskProject); }
+    session.projectId = taskProject.id;
+    const task = createTask(store.state, { projectId: session.projectId, title, notes: session.mission.slice(0, 6000), agentId: session.id, scope: session.scope, parentTaskId: session.scope?.goalId || undefined, status: 'todo' });
+    session.taskId = task.id;
+  }
   store.save();
   return publicSession(session);
 }
 app.post('/api/sessions', route(async (req, res) => res.json(await createSession(req.body))));
-app.patch('/api/sessions/:id', route(async (req, res) => {
-  const session = store.state.sessions.find(s => s.id === req.params.id);
-  if (!session) return res.status(404).json({ error: 'Session not found.' });
-  if (req.body.title !== undefined) session.title = text(req.body.title, 200);
-  if (req.body.group !== undefined) {
-    session.group = text(req.body.group, 120); ensureContext(session.group);
-    const team = store.state.teams.find(t => t.name === session.group);
-    if (team?.scope) session.scope = resolveScope(store.state.workSessions, team.scope);
-    if (team?.mission) sendMessage('you', session.id, `You have joined team "${team.name}". Shared mission:\n${team.mission}\nCheck peers and context for your scope. Coordinate ownership before starting overlapping work. Preserve your current work and normal approval requirements.`, team.name);
+function updateManagedAgent(id, body, actor = 'you') {
+  const session = store.state.sessions.find(s => s.id === id);
+  if (!session) throw new Error('Session not found.');
+  const next = { ...session };
+  for (const [field, length] of [['title',200],['role',100],['group',120]]) if (body[field] !== undefined) next[field] = text(body[field], length);
+  const team = body.teamId ? store.state.teams.find(t => t.id === body.teamId) : body.group !== undefined ? store.state.teams.find(t => t.name === next.group) : null;
+  if (body.teamId && !team) throw new Error('Team not found.');
+  if (body.group !== undefined || body.teamId !== undefined) {
+    next.teamId = team?.id || null;
+    if (team) { next.group = team.name; next.projectId = team.projectId || next.projectId; if (team.scope) next.scope = resolveScope(store.state.workSessions, team.scope); }
   }
-  if (req.body.role !== undefined) session.role = text(req.body.role, 100);
-  if (req.body.scope !== undefined) {
-    session.scope = resolveScope(store.state.workSessions, req.body.scope);
-    if (session.scope) sendMessage('you', session.id, `Your working-session assignment:\n${JSON.stringify(scopeContext(store.state.workSessions, session.scope), null, 2)}\nCheck peers and coordinate before overlapping edits. Preserve current work and normal permissions.`, session.group);
+  if (body.scope !== undefined) {
+    next.scope = resolveScope(store.state.workSessions, body.scope);
+    const project = store.state.workSessions.find(s => s.id === next.scope?.workSessionId)?.projects.find(p => p.id === next.scope?.projectId);
+    next.projectId = project?.canonicalProjectId || null;
+    next.taskId = next.scope?.goalId || null;
   }
-  store.save(); res.json(publicSession(session));
+  if (body.projectId !== undefined) {
+    if (body.projectId && !store.state.projects.some(p => p.id === body.projectId)) throw new Error('Project not found.');
+    next.projectId = body.projectId || null;
+  }
+  if (body.taskId !== undefined) next.taskId = body.taskId || null;
+  const task = next.taskId ? store.state.tasks.find(t => t.id === next.taskId) : null;
+  if (next.taskId && (!task || task.projectId !== next.projectId)) throw new Error('Task does not belong to the assigned project.');
+  if (task?.scope && JSON.stringify(task.scope) !== JSON.stringify(next.scope)) throw new Error('Task conflicts with the assignment scope.');
+  const fields = ['scope','group','projectId','taskId','teamId'];
+  const reassigned = fields.some(key => JSON.stringify(session[key]) !== JSON.stringify(next[key]));
+  if (reassigned) next.assignmentRevision = (session.assignmentRevision || 0) + 1;
+  const previousTask = store.state.tasks.find(t => t.id === session.taskId && t.agentId === id);
+  Object.assign(session, next);
+  if (reassigned) {
+    if (previousTask && previousTask.id !== next.taskId) updateTask(store.state, previousTask.id, { agentId: null });
+    if (task && task.agentId !== id) updateTask(store.state, task.id, { agentId:id });
+    ensureContext(session.group);
+    sendMessage(actor, id, `Your assignment changed. Read platform context and tasks at your next checkpoint. Preserve current work and normal permissions. Assignment revision: ${session.assignmentRevision}.${team?.mission ? '\nTeam mission: ' + team.mission : ''}`, session.group);
+  }
+  store.save(); return publicSession(session);
+}
+app.patch('/api/sessions/:id', route(async (req, res) => res.json(updateManagedAgent(req.params.id, req.body))));
+async function promptAgent(id, message, from = 'conductor') {
+  const agent = store.state.sessions.find(s => s.id === id);
+  if (!agent || agent.enrollmentRevokedAt || agent.status === 'stopped') throw new Error('Choose an enrolled agent.');
+  const row = sendMessage(from, id, message, agent.group);
+  return { ...row, delivery: 'queued', note: 'Queued in the agent mailbox for its next checkpoint; this does not submit text into a CLI approval prompt.' };
+}
+app.post('/api/sessions/:id/prompt', route(async (req, res) => res.json(await promptAgent(req.params.id, req.body.text, 'you'))));
+app.post('/api/sessions/:id/control', route(async (req, res) => {
+  const target = (await liveSessions()).find(s => s.id === req.params.id);
+  if (!target) throw new Error('Agent not found.');
+  res.json(await controlAgent(target, req.body.state, lifecycleContext));
 }));
 app.delete('/api/sessions/:id', route(async (req, res) => {
   const session = store.state.sessions.find(s => s.id === req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found.' });
-  const exists = (await tmuxSessions()).some(t => t.name === session.tmuxName);
-  if (exists) await tmuxRun(['kill-session', '-t', session.tmuxName]);
-  await browsers.action(session.id, { action: 'close' });
-  store.state.sessions = store.state.sessions.filter(s => s.id !== session.id);
-  store.save(); res.json({ ok: true });
+  res.json(await removeAgent(session, lifecycleContext));
 }));
 app.post('/api/hosts', route(async (req, res) => {
   const host = validHost(req.body.host);
@@ -218,7 +294,7 @@ app.post('/api/work-sessions', route(async (req, res) => {
   if (previous) projects = mergeProjects(carryProjects(previous), projects);
   for (const s of store.state.workSessions) if (s.status === 'active') s.status = 'paused';
   const session = { id: randomUUID(), title, status: 'active', startedAt: new Date().toISOString(), endedAt: null, notes: '', summary: '', projects };
-  store.state.workSessions.push(session); store.save(); res.json(session);
+  store.state.workSessions.push(session); initializeTasks(store.state); store.save(); res.json(session);
 }));
 app.patch('/api/work-sessions/:id', route(async (req, res) => {
   const session = store.state.workSessions.find(s => s.id === req.params.id);
@@ -245,7 +321,7 @@ app.post('/api/work-sessions/:id/projects', route(async (req, res) => {
   if (host !== 'local' && !allowedHosts.includes(host)) throw new Error('This SSH host is not configured.');
   const cwd = host === 'local' ? localDirectory(req.body.cwd || home) : text(req.body.cwd || '~', 2000);
   const project = { id: randomUUID(), name, host, cwd, goals: [] };
-  session.projects.push(project); store.save(); res.json(project);
+  session.projects.push(project); initializeTasks(store.state); store.save(); res.json(project);
 }));
 app.patch('/api/work-sessions/:id/projects/:projectId', route(async (req, res) => {
   const project = store.state.workSessions.find(s => s.id === req.params.id)?.projects.find(p => p.id === req.params.projectId);
@@ -254,6 +330,8 @@ app.patch('/api/work-sessions/:id/projects/:projectId', route(async (req, res) =
   if (host !== 'local' && !allowedHosts.includes(host)) throw new Error('This SSH host is not configured.');
   project.host = host;
   project.cwd = host === 'local' ? localDirectory(req.body.cwd || home) : text(req.body.cwd || '~', 2000);
+  const canonical = store.state.projects.find(p => p.id === project.canonicalProjectId);
+  if (canonical) Object.assign(canonical, { host: project.host, cwd: project.cwd });
   store.save(); res.json(project);
 }));
 app.post('/api/work-sessions/:id/goals', route(async (req, res) => {
@@ -263,20 +341,13 @@ app.post('/api/work-sessions/:id/goals', route(async (req, res) => {
   const title = text(req.body.title, 800);
   if (!title) throw new Error('Goal title is required.');
   const goal = { id: randomUUID(), title, status: 'todo', notes: '' };
-  project.goals.push(goal); store.save(); res.json(goal);
+  project.goals.push(goal); initializeTasks(store.state); store.save(); res.json(goal);
 }));
 app.patch('/api/work-sessions/:id/goals/:goalId', route(async (req, res) => {
   const session = store.state.workSessions.find(s => s.id === req.params.id);
   const goal = session?.projects.flatMap(p => p.goals).find(g => g.id === req.params.goalId);
   if (!goal) throw new Error('Goal not found.');
-  if (req.body.status !== undefined) {
-    if (!['todo', 'doing', 'done'].includes(req.body.status)) throw new Error('Invalid progress status.');
-    goal.status = req.body.status;
-  }
-  if (req.body.notes !== undefined) {
-    if (typeof req.body.notes !== 'string' || req.body.notes.length > 6000) throw new Error('Goal notes are limited to 6,000 characters.');
-    goal.notes = req.body.notes;
-  }
+  updateTask(store.state, goal.id, req.body);
   store.save(); res.json(goal);
 }));
 app.post('/api/teams', route(async (req, res) => {
@@ -287,7 +358,9 @@ app.post('/api/teams', route(async (req, res) => {
   if (host !== 'local' && !allowedHosts.includes(host)) throw new Error('This SSH host is not configured.');
   const cwd = host === 'local' ? localDirectory(req.body.cwd || home) : text(req.body.cwd || '~', 2000);
   if (typeof req.body.mission !== 'string' || req.body.mission.length > 12000) throw new Error('A mission can contain up to 12,000 characters.');
-  const team = { id: randomUUID(), name, mission: req.body.mission, cwd, host, scope: resolveScope(store.state.workSessions, req.body.scope), createdAt: new Date().toISOString() };
+  const scope = resolveScope(store.state.workSessions, req.body.scope);
+  const scopedProject = store.state.workSessions.find(s => s.id === scope?.workSessionId)?.projects.find(p => p.id === scope?.projectId);
+  const team = { id: randomUUID(), name, mission: req.body.mission, cwd, host, projectId: req.body.projectId || scopedProject?.canonicalProjectId || null, scope, createdAt: new Date().toISOString() };
   store.state.teams.push(team); ensureContext(name); store.save();
   res.json(team);
 }));
@@ -300,7 +373,7 @@ app.patch('/api/teams/:id', route(async (req, res) => {
 app.post('/api/teams/:id/brief', route(async (req, res) => {
   const team = store.state.teams.find(t => t.id === req.params.id);
   if (!team?.mission.trim()) throw new Error('Add a mission first.');
-  const members = store.state.sessions.filter(s => s.group === team.name);
+  const members = store.state.sessions.filter(s => s.teamId === team.id || (!s.teamId && s.group === team.name && s.host === team.host && s.cwd === team.cwd));
   for (const member of members) sendMessage('you', member.id, `Team "${team.name}" briefing:\n${team.mission}\nYour role: ${member.role || 'Collaborator'}. Coordinate with peers through the mailbox. Confirm ownership before editing overlapping files, report blockers, and preserve normal approval requirements.`, team.name);
   res.json({ count: members.length });
 }));
@@ -310,16 +383,8 @@ app.post('/api/teams/:id/start', route(async (req, res) => {
   if (!Array.isArray(req.body.roles) || req.body.roles.length < 1 || req.body.roles.length > 6) throw new Error('Choose between one and six agents.');
   const roles = req.body.roles.map(r => ({ name: text(r.name, 100), provider: text(r.provider, 20), assignment: typeof r.assignment === 'string' ? r.assignment.slice(0, 4000) : '' }));
   if (roles.some(r => !r.name || !providers.includes(r.provider))) throw new Error('Each agent needs a role and an installed provider.');
-  const existing = await tmuxSessions();
-  if (store.state.sessions.some(s => s.group === team.name && roles.some(r => r.name === s.role) && existing.some(t => t.name === s.tmuxName))) throw new Error('An agent with one of these roles is already running. Give new agents different roles.');
-  const launched = [], errors = [];
-  for (const role of roles) {
-    try {
-      launched.push(await createSession({ provider: role.provider, host: team.host, cwd: team.cwd, group: team.name, title: `${team.name} / ${role.name}`, role: role.name, scope: team.scope,
-        task: `Shared team mission:\n${team.mission}\n\nYour role: ${role.name}.\n${role.assignment}\nUse the platform mailbox to agree on ownership, share progress, and hand off work. Check peers before editing files. Do not spawn extra agents unless the user requests them.` }));
-    } catch (error) { errors.push({ role: role.name, error: error.message }); }
-  }
-  res.json({ launched, errors });
+  const result = await launchTeamMembers(team, roles.map(r => ({ provider:r.provider, role:r.name, task:r.assignment })), { store, liveSessions, createSession });
+  res.json({ ...result, launched:result.started });
 }));
 function sendMessage(from, to, message, group) {
   if (typeof message !== 'string' || !message.trim() || message.length > 12000) throw new Error('Messages must contain 1–12,000 characters.');
@@ -348,7 +413,17 @@ app.post('/api/agent', route(async (req, res) => {
     if (b.to !== 'coordinator' && (!target || !canCommunicate(agent, target))) throw new Error('Peers must share your group or working session. Ask the user to assign the sessions for cross-project handoffs.');
     return res.json(sendMessage(agent.id, b.to, b.message, agent.group));
   }
-  if (b.command === 'context') return res.json({ group: agent.group, scope: scopeContext(store.state.workSessions, agent.scope), mission: store.state.teams.find(t => t.name === agent.group)?.mission || '', content: fs.readFileSync(ensureContext(agent.group), 'utf8') });
+  if (b.command === 'context') return res.json({ group: agent.group, id: agent.id, agentId: agent.id, agent: { id: agent.id, attemptId: agent.attemptId || agent.id, assignmentRevision: agent.assignmentRevision || 0 }, attemptId: agent.attemptId || agent.id, assignmentRevision: agent.assignmentRevision || 0, projectId: agent.projectId, taskId: agent.taskId, scope: scopeContext(store.state.workSessions, agent.scope), mission: agent.mission || store.state.teams.find(t => t.name === agent.group)?.mission || '', content: fs.readFileSync(ensureContext(agent.group), 'utf8') });
+  if (b.command === 'tasks') return res.json({ tasks: store.state.tasks.filter(t => {
+    if (agent.scope?.workSessionId && t.scope?.workSessionId !== agent.scope.workSessionId) return false;
+    if (agent.scope?.projectId && t.scope?.projectId !== agent.scope.projectId) return false;
+    if (agent.scope?.goalId && !taskDescendsFrom(store.state, t, agent.scope.goalId)) return false;
+    if (agent.taskId && !taskDescendsFrom(store.state, t, agent.taskId)) return false;
+    return agent.scope?.workSessionId || (agent.projectId ? t.projectId === agent.projectId : t.agentId === agent.id);
+  }).slice(-100).map(({id,title,status,revision,projectId,notes,agentId}) => ({id,title,status,revision,projectId,notes:notes.slice(0,600),agentId})) });
+  if (b.command === 'task' || b.command === 'report' || b.command === 'task_event') {
+    const result = recordTaskEvent(store.state, agent, b); store.save(); return res.json(result);
+  }
   if (b.command === 'progress') {
     const working = store.state.workSessions.find(s => s.id === agent.scope?.workSessionId);
     if (!working) throw new Error('Ask the user to assign you to a working session first.');
@@ -356,12 +431,7 @@ app.post('/api/agent', route(async (req, res) => {
     const project = working.projects.find(p => p.goals.some(g => g.id === goalId));
     const goal = project?.goals.find(g => g.id === goalId);
     if (!goal || (agent.scope.projectId && project.id !== agent.scope.projectId) || (agent.scope.goalId && goal.id !== agent.scope.goalId)) throw new Error('That goal is outside your assigned scope.');
-    if (!['todo', 'doing', 'done'].includes(b.status)) throw new Error('Choose todo, doing, or done.');
-    if (b.status === 'done' && !b.notes?.trim()) throw new Error('Include a concise verification note when marking a goal done.');
-    if (b.notes !== undefined && b.notes !== null && (typeof b.notes !== 'string' || b.notes.length > 6000)) throw new Error('Notes must be text of up to 6,000 characters.');
-    goal.status = b.status;
-    if (b.notes) goal.notes = b.notes;
-    sendMessage(agent.id, 'coordinator', `${project.name} / ${goal.title}: ${goal.status}${goal.notes ? '\n' + goal.notes : ''}`, agent.group);
+    recordTaskEvent(store.state, agent, { ...b, taskId: goal.id });
     store.save(); return res.json(goal);
   }
   if (b.command === 'browser') return res.json(await browsers.action(agent.id, b));
@@ -377,9 +447,21 @@ app.post('/api/coordinator', route(async (req, res) => {
   const workSessionId = req.body.workSessionId ? text(req.body.workSessionId, 80) : '';
   if (workSessionId && !store.state.workSessions.some(s => s.id === workSessionId)) throw new Error('Working session not found.');
   const live = await liveSessions();
-  res.json(await coordinator.ask(req.body.prompt, group, live, history, workSessionId, req.body.automatic === true, req.body.environment === 'local' || allowedHosts.includes(req.body.environment) ? req.body.environment : 'local'));
+  let scope;
+  if (req.body.taskId || req.body.projectId) {
+    const task = req.body.taskId ? store.state.tasks.find(t => t.id === req.body.taskId) : null;
+    if (req.body.taskId && !task) throw new Error('Task not found.');
+    const projectId = req.body.projectId || task?.projectId;
+    if (!store.state.projects.some(p => p.id === projectId)) throw new Error('Project not found.');
+    if (task && task.projectId !== projectId) throw new Error('Task is not in the selected project.');
+    if (workSessionId && task?.scope?.workSessionId && task.scope.workSessionId !== workSessionId) throw new Error('Task is not in the selected working session.');
+    const tasks = store.state.tasks.filter(t => t.projectId === projectId && (!task || t.id === task.id || t.parentTaskId === task.id) && (!workSessionId || t.scope?.workSessionId === workSessionId));
+    scope = { layer:task ? 'task' : 'project', projectIds:[projectId], taskIds:tasks.map(t=>t.id), workSessionIds:workSessionId ? [workSessionId] : [], agentIds:live.filter(s=>tasks.some(t=>t.id===s.taskId || t.agentId===s.id)).map(s=>s.id) };
+  }
+  res.json(await coordinator.ask(req.body.prompt, group, live, history, workSessionId, req.body.automatic === true, req.body.environment === 'local' || allowedHosts.includes(req.body.environment) ? req.body.environment : 'local', scope ? {scope} : {}));
 }));
 app.post('/api/coordinator/cancel', (req, res) => { coordinator.cancel(); res.json({ ok: true }); });
+app.post('/api/coordinator/control', route(async (req, res) => res.json(coordinator.controlLoop(req.body.state))));
 const scanTasks = new Map();
 async function refreshRemote(host, forceIndex = false) {
   if (!allowedHosts.includes(host)) throw new Error('This SSH connection is not enabled.');
@@ -499,6 +581,7 @@ server.listen(port, '127.0.0.1', () => {
   console.log(`Super Terminal → http://127.0.0.1:${port}\nAgent sessions persist in tmux when this server stops.`);
   process.parentPort?.postMessage({ type: 'ready', port });
   if (process.env.SUPER_TERMINAL_TEST !== '1') {
+    coordinator.startLoop();
     for (const host of allowedHosts) refreshRemote(host);
     const scanTimer = setInterval(() => { if (!stopping) for (const host of allowedHosts) refreshRemote(host); }, 20000);
     scanTimer.unref();
@@ -527,7 +610,7 @@ async function stop() {
   const deadline = setTimeout(() => process.exit(0), 4000);
   for (const attachment of attachments) { try { attachment.kill(); } catch {} }
   for (const client of wss.clients) client.close();
-  coordinator.cancel();
+  coordinator.stopLoop();
   await browsers.close();
   server.close(() => { clearTimeout(deadline); process.exit(0); });
 }

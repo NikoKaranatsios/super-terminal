@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { readRecords } from './history.mjs';
 
 // Explicit end-of-turn records only: commentary and tool calls are not completion.
@@ -27,6 +27,16 @@ export class ActivityMonitor {
     if (events.some(e => e.key === key)) return;
     events.push({ id: randomUUID(), key, kind, at: new Date().toISOString(), target: source.historyId || source.id, host: source.host, provider: source.provider, title: String(source.role || source.title || source.provider).slice(0, 180) });
     this.store.state.activity = events.slice(-200); this.store.save();
+  }
+  notify({ title, text, target = 'conductor', host = 'local' }) {
+    if (typeof title !== 'string' || !title.trim() || title.length > 200 || typeof text !== 'string' || !text.trim() || text.length > 2000) throw new Error('A notification needs a short title and message.');
+    const key = 'conductor:' + createHash('sha256').update(JSON.stringify([title, text, target])).digest('hex');
+    const existing = this.store.state.activity.find(e => e.key === key);
+    if (existing) return { ...existing, duplicate: true };
+    const event = { id: randomUUID(), key, kind: 'conductor', notify: true, at: new Date().toISOString(), target, host, provider: 'conductor', title, text };
+    this.store.state.activity.push(event);
+    this.store.state.activity = this.store.state.activity.slice(-200);
+    this.store.save(); return event;
   }
   histories(host, rows) {
     const baseline = !this.baselines.has(host);

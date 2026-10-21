@@ -40,6 +40,78 @@ def content(value):
     if isinstance(value, list): return '\n'.join(c.get('text', '') for c in value if c.get('type') in ('text','input_text','output_text'))
     return ''
 
+def output_page(file, cursor=None, budget=262144):
+    with open(file, 'rb') as f:
+        size = os.fstat(f.fileno()).st_size
+        end = size if cursor is None else int(cursor)
+        if end < 0 or end > size: raise ValueError('Conversation changed. Reload recent output.')
+        length = min(end, budget)
+        while True:
+            start = end-length
+            f.seek(start); data = f.read(length)
+            first = data.find(b'\n') if start else -1
+            if not start or (first >= 0 and first < len(data)-1) or length >= 8388608: break
+            length = min(end, length*2)
+        skipped = start > 0 and (first < 0 or first == len(data)-1)
+        offset = first+1 if start and first >= 0 and not skipped else 0
+        rows = []
+        position = start+offset
+        if not skipped:
+            for line in data[offset:].splitlines():
+                record_offset = position
+                position += len(line)+1
+                try:
+                    value = json.loads(line)
+                    if isinstance(value,dict):
+                        value['_outputOffset'] = record_offset
+                        rows.append(value)
+                except (ValueError, UnicodeError): pass
+        return rows, (start+offset or None), dict(totalBytes=size, **{'from':start+offset}, to=end, skippedLargeRecord=skipped)
+
+def output_events(provider, rows):
+    out = []
+    ordinal = 0
+    def readable(value):
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2) if value is not None else ''
+    def push(r, role, kind, value, name=None):
+        nonlocal ordinal
+        text = readable(value)
+        if not text: return
+        event = dict(role=role, kind=kind, text=text, timestamp=r.get('timestamp') or r.get('ts'))
+        if name: event['name'] = name
+        if '_outputOffset' in r:
+            event['id'] = provider+':'+str(r['_outputOffset'])+':'+str(ordinal)
+            ordinal += 1
+        out.append(event)
+    for r in rows:
+        ordinal = 0
+        p=r.get('payload',r)
+        if provider=='codex':
+            kind=p.get('type')
+            if (r.get('type')=='response_item' and kind=='message') or kind in ('userMessage','agentMessage'):
+                role=p.get('role') or ('user' if kind=='userMessage' else 'assistant')
+                if role in ('user','assistant'): push(r,role,'commentary' if p.get('channel')=='commentary' else 'message',p.get('text') or content(p.get('content')))
+            elif kind in ('function_call','custom_tool_call','tool_call'): push(r,'tool','tool_call',p.get('arguments',p.get('input')),p.get('name') or p.get('call_id'))
+            elif kind in ('function_call_output','custom_tool_call_output','tool_result'): push(r,'tool','tool_result',p.get('output',p.get('content')),p.get('name') or p.get('call_id'))
+            elif kind=='commandExecution':
+                push(r,'tool','tool_call',p.get('command'),'command')
+                push(r,'tool','tool_result',p.get('aggregatedOutput',p.get('output')),'command')
+            elif kind=='fileChange': push(r,'tool','tool_result',p.get('changes'),'file changes')
+        else:
+            role=r.get('type',r.get('role'))
+            if role not in ('user','assistant','tool') or r.get('isMeta'): continue
+            blocks=r.get('message',{}).get('content',r.get('content'))
+            if isinstance(blocks,list):
+                for block in blocks:
+                    kind=block.get('type')
+                    if kind in ('text','input_text','output_text'): push(r,role,'message',block.get('text'))
+                    if kind=='tool_use': push(r,'tool','tool_call',block.get('input'),block.get('name'))
+                    if kind=='tool_result': push(r,'tool','tool_result',content(block.get('content')),block.get('tool_use_id'))
+            else: push(r,role,'tool_result' if role=='tool' else 'message',blocks,r.get('name'))
+            for call in r.get('tool_calls',r.get('message',{}).get('tool_calls',[])):
+                push(r,'tool','tool_call',call.get('function',{}).get('arguments'),call.get('function',{}).get('name'))
+    return out
+
 def messages(provider, rows):
     out = []
     for r in rows:
@@ -152,7 +224,8 @@ result=discover()
 if sys.argv[1]=='transcript':
     session=next((r for r in indexes(result['processes']) if r['provider']+':'+r['sessionId']==sys.argv[2]),None)
     if not session: raise RuntimeError('Conversation no longer exists on this host.')
-    print(json.dumps(dict(messages=messages(session['provider'],records(session['file'],2*1024*1024)))))
+    rows,cursor,coverage=output_page(session['file'],sys.argv[3] if len(sys.argv)>3 else None)
+    print(json.dumps(dict(messages=messages(session['provider'],rows),events=output_events(session['provider'],rows),nextCursor=cursor,coverage=coverage)))
 else:
     if sys.argv[1]=='index':
         result['history']=indexes(result['processes'])

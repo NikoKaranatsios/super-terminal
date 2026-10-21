@@ -7,7 +7,7 @@ import { applyAssessments } from '../server/coordinator.mjs';
 import { matchHistory } from '../server/history.mjs';
 import { run } from '../server/core.mjs';
 
-const context = () => ({store:{state:{sessions:[],teams:[],projects:[],messages:[]},save(){}},liveSessions:async()=>[],allowedHosts:[],history:{},createSession:async()=>{throw new Error('unexpected launch');}});
+const context = () => ({store:{state:{sessions:[],teams:[],projects:[],messages:[]},save(){}},liveSessions:async()=>[],allowedHosts:[],history:{},removeBridge:async()=>{},createSession:async()=>{throw new Error('unexpected launch');}});
 test('Conductor classifications cannot invent conversation IDs or validity states',()=>{
   const state={assessments:{}};
   applyAssessments(state,[{id:'a',status:'open',summary:'Finish tests'},{id:'missing',status:'completed'},{id:'b',status:'invented'}],[{id:'a',updatedAt:'now'},{id:'b',updatedAt:'then'}]);
@@ -39,15 +39,16 @@ test('cleanup keeps live terminals, provider histories and unrelated state',asyn
 });
 test('external process controls pause, resume and stop only the selected PID',async()=>{
   const child=spawn('/bin/sleep',['60']);await once(child,'spawn');
-  const c=context(); const row={id:'test',kind:'external',pid:child.pid,provider:'sleep',host:'local',title:'test sleep',status:'external'};
+  const started=(await run('ps',['-p',String(child.pid),'-o','lstart='],{env:{...process.env,LC_ALL:'C'}})).stdout.trim();
+  const c=context(); const row={id:'test',kind:'external',pid:child.pid,provider:'sleep',host:'local',title:'test sleep',status:'external',startedAt:new Date(started).toISOString()};
   c.liveSessions=async()=>[row];
   try {
-    await performAction({type:'session_state',target:'test',state:'paused'},c);
+    assert.equal((await performAction({type:'session_state',target:'test',state:'paused'},c)).ok,true);
     assert.match((await run('ps',['-p',String(child.pid),'-o','stat='])).stdout,/T/);
     row.status='paused';await performAction({type:'session_state',target:'test',state:'running'},c);
     assert.doesNotMatch((await run('ps',['-p',String(child.pid),'-o','stat='])).stdout,/T/);
     row.runtime=true;await assert.rejects(performAction({type:'session_state',target:'test',state:'stopped'},c),/shared provider service/);row.runtime=false;
-    row.provider='codex';await assert.rejects(performAction({type:'session_state',target:'test',state:'stopped'},c),/identity changed/);row.provider='sleep';
+    row.provider='codex';const rejected=await performAction({type:'session_state',target:'test',state:'stopped'},c);assert.equal(rejected.ok,false);assert.match(rejected.results[0].error,/identity changed/);row.provider='sleep';
     const exited=once(child,'exit');await performAction({type:'session_state',target:'test',state:'stopped'},c);await exited;
     assert.equal(c.store.state.lifecycle.test,'stopped');
   } finally {try{process.kill(child.pid,'SIGCONT');child.kill();}catch{}}
@@ -62,4 +63,42 @@ test('working sessions start, track goals, wrap and carry unfinished work',async
   const next=await performAction({type:'start_work_session',name:'Afternoon',text:'',target:first.session.id},c);
   assert.equal(next.session.projects[0].goals.length,1);
   assert.equal(next.session.projects[0].goals[0].title,'Review logs');
+});
+test('task actions share completion validation and session pause does not signal agents',async()=>{
+  const c=context();c.history={all:async()=>[]};
+  const working=await performAction({type:'start_work_session',name:'Review',text:'App: Existing'},c);
+  const project=working.session.projects[0];
+  const created=await performAction({type:'create_goal',name:'New check',workSessionId:working.session.id,projectId:project.canonicalProjectId},c);
+  assert.equal(project.goals.at(-1).id,created.task.id);
+  await assert.rejects(performAction({type:'update_task',target:created.task.id,state:'done'},c),/evidence/);
+  await performAction({type:'update_task',target:created.task.id,state:'blocked',text:'Need fixture'},c);
+  assert.equal(project.goals.at(-1).status,'blocked');
+  await performAction({type:'work_session_state',target:working.session.id,state:'paused'},c);
+  assert.equal(working.session.status,'paused');assert.deepEqual(c.store.state.lifecycle,undefined);
+});
+test('partial team retries and concurrent requests launch missing roles only',async()=>{
+  const c=context();c.liveSessions=async()=>c.store.state.sessions;
+  let failed=true, launches=0;
+  c.createSession=async args=>{
+    launches++;
+    if(args.role==='Check' && failed)throw new Error('Fixture unavailable');
+    const row={...args,id:args.role,status:'running'};c.store.state.sessions.push(row);return row;
+  };
+  const members=[{role:'Lead',provider:'codex'},{role:'Check',provider:'codex'}];
+  const result=await performAction({type:'start_team',name:'Review',text:'Review fixture',cwd:process.cwd(),members},c);
+  assert.equal(result.errors.length,1);failed=false;
+  const outcomes=await Promise.all([1,2].map(()=>performAction({type:'add_team_members',target:result.teamId,members},c)));
+  assert.equal(launches,3);assert.equal(c.store.state.sessions.length,2);
+  assert.equal(outcomes[1].existing.length,2);
+  const before=c.store.state.teams.length;
+  await assert.rejects(performAction({type:'start_team',name:'Invalid',text:'Mission',cwd:process.cwd(),members:[{role:'Same'},{role:'Same'}]},c),/distinct/);
+  assert.equal(c.store.state.teams.length,before);
+});
+test('prompt and notifications use bounded hooks without claiming CLI execution',async()=>{
+  const c=context();c.store.state.sessions.push({id:'agent',group:'group'});
+  c.sendMessage=()=>({id:'queued'});
+  const result=await performAction({type:'prompt_agent',target:'agent',text:'Continue authorized work'},c);
+  assert.equal(result.delivery,'queued');assert.match(result.result,/not yet been accepted/);
+  c.notify=async payload=>({notified:true,...payload});
+  assert.equal((await performAction({type:'notify',name:'Review',text:'Needs your input'},c)).notified,true);
 });

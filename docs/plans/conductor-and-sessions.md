@@ -1,12 +1,14 @@
 # Conductor and working sessions
 
-Status: partial implementation; C1–C3 remain open. The interaction stays one chat, with concise questions and grounded results. No board, project editor form, or separate orchestration dashboard is required.
+Status: partial implementation; C1–C3 remain open. The interaction uses one chat plus the requested compact three-layer task overview. Goals and teams are configured conversationally; working-session and process controls remain separate.
 
 Sources: [coordinator](../../server/coordinator.mjs), [actions](../../server/conductor-actions.mjs), [schema](../../server/conductor-schema.json), [instructions](../../server/coordinator-instructions.md), [working sessions](../../server/work-sessions.mjs), [API](../../server/index.mjs), [Conductor tests](../../test/conductor.test.mjs), [scope tests](../../test/work-sessions.test.mjs).
 
 ## C1 — Consistent projects, scope, and chat controls
 
-**Current gap.** Global project records and projects nested inside a human working session use separate IDs. Actions resolve host/cwd from global projects, then resolve the nested scope separately. A valid scoped launch can therefore default to the wrong folder/environment. Topic parsing may copy a remote history path but always assigns the local host. Existing APIs for adding/editing nested projects and goals are not exposed through Conductor actions.
+**Implemented.** Canonical tasks retain legacy goal IDs, nested projects link through `canonicalProjectId`, and launch resolution validates project/team/task/scope before choosing host/cwd. Topic parsing preserves unambiguous remote host/owner evidence. Chat can create/update tasks and goals, rename agents, and edit/brief/add members to teams. Carry-forward retains source IDs. See `tasks.mjs`, `work-sessions.mjs`, `conductor-actions.mjs` and their tests.
+
+**Remaining gap.** Direct editing of a nested project location through chat and complete migration validation of every legacy shape still need acceptance. Existing process assignments do not move their actual working directory automatically.
 
 **Implementation.**
 
@@ -23,7 +25,9 @@ Sources: [coordinator](../../server/coordinator.mjs), [actions](../../server/con
 
 ## C2 — Human-session lifecycle and grounded progress
 
-**Current gap.** Human-session pause/wrap updates records only; it does not pause or stop agents. This distinction is valid, but “pause the session” can be ambiguous. Wrap summaries are derived from recorded goal state and notes, not a verified synthesis of all agent work. Completion-evidence requirements differ between entry points. There is no common response structure ensuring a session overview includes unresolved goals, active agents, and blockers.
+**Implemented.** The sidebar identifies the working session and explicitly says agents continue after human-session pause/stop. Managed process controls are separate and retain partial results. Canonical tasks drive the project squares, table and details. Shared validation requires completion evidence from chat, API and helper reports and records attribution.
+
+**Remaining gap.** Wrap summaries use reported state; they do not independently verify tests. Explicit bulk agent-control requests still execute as bounded individual actions. Conflicting evidence can be discussed by Conductor, but there is no general evidence-merging engine.
 
 **Implementation.**
 
@@ -39,7 +43,9 @@ Sources: [coordinator](../../server/coordinator.mjs), [actions](../../server/con
 
 ## C3 — Bounded context, usage, and action accounting
 
-**Current gap.** Review excerpts and model rounds are bounded, but all live terminals, project records, and some nested records can expand the full snapshot. Usage is collected for each model result but only the final round is stored. Action batches beyond the supported slice are not individually explained. Only recent mailbox text enters the snapshot, without full recipient/group attribution. Cancellation can leave completed actions without a useful final summary.
+**Implemented.** Continuous collection uses no model. Eligible work changes and active unfinished work trigger paced decisions; empty/unchanged completed scopes stay listening without model calls. The loop persists run/pause/stop intent, backs off failures, and permits one reply at once. Input is capped at 24,000 bytes with omission counts; round usage is aggregated. Action results, duplicate receipts, cancellation state and provider-visible trace events persist. `conductor-policy.mjs` rechecks fresh active scope before autonomous mutations. Optional first briefings remain read-only.
+
+**Remaining gap.** The byte cap is not an exact token count or billing cap. Crash recovery of an action between its external effect and receipt remains conservative, not a distributed transaction. Provider-authenticated, remote and long-running acceptance are separate from fake-model tests.
 
 **Implementation.**
 
@@ -52,4 +58,4 @@ Sources: [coordinator](../../server/coordinator.mjs), [actions](../../server/con
 
 **Dependencies.** C1/C2 define the useful overview. D2 defines evidence quality. T1/T3 provide reconcilable operation results.
 
-**Acceptance.** Large fixture inventories stay within the chosen input cap and expose omitted coverage. One user request cannot run duplicate launches through a model retry. Usage covers all available rounds. Automatic briefings cannot mutate state. Cancellation and limits leave a readable ledger of completed and unexecuted work. Ordinary discovery and inbox storage still trigger no model calls.
+**Acceptance.** Large fixture inventories stay within the chosen input cap and expose omitted coverage. One user request cannot run duplicate launches through a model retry. Usage covers all available rounds. Automatic briefings cannot mutate state. Cancellation and limits leave a readable ledger of completed and unexecuted work. Ordinary discovery and inbox storage make no model calls; a separate enabled decision round may consume the collected changes within its cadence and active-scope limits.

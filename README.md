@@ -1,10 +1,14 @@
 # Super Terminal
 
-A local desktop collection of your terminals, with one Conductor chat. No board or dashboard.
+A local desktop collection of your terminals, with continuous Conductor coordination and a compact view of work across projects.
 
 [Implementation status](docs/implementation-status.md) · [Remaining implementation plans](docs/plans/README.md) · [Architecture and operations](docs/README.md) · [Verification](docs/verification.md)
 
 Choose **Local**, **157**, or **Romagnolo 91** from the environment selector. The list refreshes automatically, including Codex, Claude, and Grok processes started outside the app. Click a terminal to use its original CLI; click an external agent to read its matched saved conversation. Provider background services are labelled separately from individual agents.
+
+The sidebar names the selected human working session and lets you start, pause, resume, or stop it. Agent titles emphasize their task or role, with project, team and provider context. Agent process controls are separate: pausing a working-session record leaves its agents running. Closing a terminal tab only detaches its screen.
+
+**Tasks** opens three levels: squares grouped by project → a project task table → task details, assigned agent, evidence and updates. Green means in progress, yellow blocked, dark blue completed, and gray stopped; text labels also describe every state. **Teams** shows the mission and members. Describe goals or a new team in Conductor chat instead of filling out a setup form.
 
 ## Conductor
 
@@ -25,7 +29,9 @@ Actions run through a small validated platform API. Conductor sees the actual re
 
 **Team messages** shows the agents’ mailbox conversations, including sender, recipient, team, and delivery state. New agents receive peer/mailbox instructions and the team mission automatically. Messages are queued, not injected as keystrokes; agents check their inbox at milestones. External agents can be tracked and assigned but do not gain a mailbox or startup instructions retroactively.
 
-Conductor uses the installed Codex CLI login with GPT-6-Luna, low reasoning, compact instructions, no plugins or shell tools. The first briefing is automatic by default; subsequent model calls happen only when you ask. Each review reads a bounded batch of recent conversation excerpts, rotating across locations. Assessments and chat memory persist locally. “Review more history” continues with the next batch. History indexing and process refreshes themselves use no model calls.
+Conductor uses the installed Codex CLI login with GPT-6-Luna, low reasoning, compact instructions, no plugins or shell tools. Its continuous loop collects structured work without model calls, then makes bounded decision rounds for relevant changes and unfinished authorized work. It listens without paid idle rounds when there is no eligible work. Run, pause and stop controls show the loop state and next round. Errors back off; only one reply runs at once. Context has a byte cap, and usage is summed across model rounds. The optional first history briefing remains read-only. “Review more history” reads another bounded batch.
+
+Conductor can name, start, pause, stop, assign and prompt managed agents; create and update tasks/goals; create teams, add missing members and brief them; and manage human sessions. Continuous rounds are restricted to active assignments. Prompts are queued in cooperative agent mailboxes, with delivery shown honestly; they do not answer CLI approval prompts. Provider-exposed progress and action results appear in its console alongside replies.
 
 ## Desktop app
 
@@ -54,7 +60,7 @@ The installed app bundles its own Electron/Node runtime and starts its loopback 
 
 Use **Split Right** or **Split Below** to display up to six panels per window. Click a panel and select an agent from the sidebar. Drag the sidebar or panel dividers to resize; double-click a panel divider to return to equal sizes. Focused dividers also respond to arrow keys. Tab selection and split proportions survive a reload and restore in the main window when reopening. **New Window** in the toolbar opens the selected conversation in a separate desktop window. Closing a tab detaches the screen without stopping its agent.
 
-Completion notifications are on by default. Alerts target their conversation when available; **Activity** retains the latest 200 events across all locations. Explicit successful end-of-turn log records trigger “finished a response”; disappearing agent processes trigger a separate “exited” alert. This does not certify that a project or task is complete. Old history and SSH outages do not trigger alerts. Detection uses periodic process/history scans, makes no AI calls, and continues with windows closed while the app runs. Providers without readable completion records can only be detected when the process exits. macOS notification permissions and Focus control banners and sound; Settings includes a test button. Native banner/click acceptance and unavailable-target handling remain in the [notification plan](docs/plans/desktop-and-notifications.md).
+Conductor chooses which updates deserve native notifications. Raw response completions and process exits remain in **Activity**, alongside its notification decisions; a completed response does not certify that a task is done. Notifications are deduplicated and honor Settings. The watcher is shared across windows and continues while the app runs with windows closed. macOS permissions and Focus still control banners and sound; Settings includes a test button. Native banner/click acceptance remains in the [notification plan](docs/plans/desktop-and-notifications.md).
 
 Closing the window keeps the app running on macOS. Quitting stops an app-owned local service, its browser tools and active Conductor request; a separately started compatible service reused by the app is left running. tmux terminals survive service shutdown and can reconnect when the app reopens. Rebooting ends processes but preserves conversation histories and app data.
 
@@ -68,7 +74,7 @@ Local processes, remote processes, and history indexes refresh independently. Fa
 
 Remote discovery is read-only. If the SSH account already permits passwordless sudo, the reader uses that existing permission to inspect root-owned provider histories and histories belonging to discovered agent accounts. It never enables sudo, requests passwords, or changes permissions. Without that access it reads what the SSH account can access. Root-owned tmux panes can be attached using the same existing sudo permission. Resumed conversations retain their original server user.
 
-Provider history readers support Codex SQLite/JSONL, Claude project JSONL, and Grok session summaries/JSONL. They read bounded text excerpts, omit tool output, tolerate partial writes, and never modify provider history. Codex indexing includes up to 2,000 unarchived threads per account.
+Provider history readers support Codex SQLite/JSONL, Claude project JSONL, and Grok session summaries/JSONL. Saved-output views include available messages, commentary, tool calls and results. Load earlier output without replacing the recent tail; readers preserve record boundaries, tolerate partial writes, and never modify provider history. Reads are bounded, with an explicit notice for an individual record over 8 MiB. Internal/encrypted reasoning and unlogged output are unavailable. Codex indexing includes up to 2,000 unarchived threads per account.
 
 External conversations are linked using a resume ID, an open transcript file, or a unique provider/folder/start-time match (labelled in the view). Ambiguous same-folder conversations are offered as candidates, not asserted to belong to a process. A shared Codex runtime may have several open conversations. An inaccessible or unlogged conversation cannot be reconstructed.
 
@@ -78,7 +84,7 @@ Ordinary terminal processes started outside the app cannot have their live scree
 
 Managed agents receive a private Python helper and session-scoped credential. Same-group agents or agents in the same human working session can exchange messages and progress. Remote agents connect through a loopback-only reverse SSH tunnel. Their credentials cannot control arbitrary terminals or call Conductor’s management API.
 
-The helper exposes `peers`, `inbox`, `send`, `context`, `progress`, and `browser` commands. Startup instructions include the full command path. Each agent browser owns its own persistent profile, cookies, and storage, separate from your personal browser tabs. Browser instances start on demand. This isolates browser state, not the filesystem; CLI permissions and approval mechanisms remain in effect.
+The helper exposes mailbox/context commands, scoped task creation and reports, legacy goal progress, and browser tools. A private outbox retains structured updates for retry. Agents report meaningful changes with short notes and completion evidence; collection needs no model or repeated document parsing. Implementation files can be linked as evidence, but private task state is kept outside repositories. Each agent browser owns its own persistent profile, cookies, and storage, separate from personal tabs. This isolates browser state, not the filesystem; CLI permissions and approval mechanisms remain in effect.
 
 ## Local data and development
 

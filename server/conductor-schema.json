@@ -9,10 +9,12 @@
   ],
   "properties": {
     "answer": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 10000
     },
     "memory": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 2500
     },
     "assessments": {
       "type": "array",
@@ -41,7 +43,8 @@
             "type": "string"
           }
         }
-      }
+      },
+      "maxItems": 8
     },
     "actions": {
       "type": "array",
@@ -61,7 +64,8 @@
           "teamId",
           "members",
           "workSessionId",
-          "goalId"
+          "goalId",
+          "taskId"
         ],
         "properties": {
           "type": {
@@ -80,7 +84,17 @@
               "start_work_session",
               "work_session_state",
               "goal_progress",
-              "resume_conversation"
+              "resume_conversation",
+              "create_task",
+              "update_task",
+              "create_goal",
+              "update_goal",
+              "update_team",
+              "brief_team",
+              "add_team_members",
+              "rename_agent",
+              "prompt_agent",
+              "notify"
             ]
           },
           "target": {
@@ -138,9 +152,13 @@
           },
           "goalId": {
             "type": "string"
+          },
+          "taskId": {
+            "type": "string"
           }
         }
-      }
+      },
+      "maxItems": 8
     }
   }
 }

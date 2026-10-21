@@ -1,6 +1,6 @@
 # Teams and agent lifecycle
 
-Status: partial implementation; T1–T3 remain open. Keep coordination in the Conductor chat and the existing readable Team messages view. Do not build a scheduler or automatically launch extra agents from peer requests.
+Status: partial implementation; T1–T3 remain open. Keep coordination in Conductor chat, the compact Teams view, and readable Team messages. The requested continuous loop may launch within user-authorized active scope; peer text alone never grants launch permission.
 
 Sources: [agent platform](../../server/agent-platform.mjs), [Python helper](../../server/bridge.py), [API/session creation](../../server/index.mjs), [Conductor actions](../../server/conductor-actions.mjs), [scope/communication rules](../../server/work-sessions.mjs), [integration tests](../../test/integration.test.mjs).
 
@@ -22,7 +22,9 @@ Sources: [agent platform](../../server/agent-platform.mjs), [Python helper](../.
 
 ## T2 — Team membership, delivery, and bridge recovery
 
-**Current gap.** Groups use mutable names as mailbox/context identity; equal folder basenames can unintentionally share a group across projects/environments. Conductor assignment and API assignment do not send equivalent scope/mission updates. The helper marks messages read when fetching them; there is no acknowledgment that an agent acted on them. Only managed agents have tools. A lost managed SSH transport also loses its reverse bridge, and ordinary remote tmux attachment does not recreate that bridge.
+**Implemented.** Managed team membership uses stable IDs; legacy equal-name peers also require the same host/folder. Shared assignment handling sends a checkpoint handoff and increments an assignment revision. Task create/report events are scoped, deduplicated and reject stale assignment metadata; private helper outboxes support retry. Chat supports team edits, briefings and retrying missing roles.
+
+**Remaining gap.** Context files still use group names. Fetching a mailbox marks messages read, not accepted; prompts remain cooperative. Only managed agents have tools. Losing a managed SSH transport loses its reverse bridge; attaching remote tmux does not rebuild it.
 
 **Implementation.**
 
@@ -35,13 +37,15 @@ Sources: [agent platform](../../server/agent-platform.mjs), [Python helper](../.
 
 **Dependencies.** C1 provides scope identity. T1/T3 provide session ownership and credential lifecycle. P3 provides migrations.
 
-**Acceptance.** Two unrelated projects with the same folder name do not automatically become team peers. Reassignment sends one accurate handoff. Users can read both sides of an exchange and distinguish queued/read/acknowledged states. SSH recovery restores helper access without duplicating an agent. Out-of-scope messages/progress are rejected. Normal polling never creates automatic Conductor model calls.
+**Acceptance.** Two unrelated projects with the same folder name do not automatically become team peers. Reassignment sends one accurate handoff. Users can read both sides of an exchange and distinguish queued/read/acknowledged states. SSH recovery restores helper access without duplicating an agent. Out-of-scope messages/progress are rejected. Polling and task recording use no model calls; the separate continuous decision loop observes eligible changes within its bounded cadence.
 
 **Constraint/decision.** An external process may be tracked and grouped without being enrolled. If external tool enrollment is added, make it an explicit opt-in handoff using the existing CLI, not silent credential injection or a promise to adopt its live TTY. The existing managed-resume path remains available.
 
 ## T3 — Unified pause, stop, deletion, and cleanup
 
-**Current gap.** Conductor stop can kill both managed remote and local tmux; DELETE kills local tmux and closes the browser but does not explicitly stop remote tmux; cleanup removes records but does not close their browsers or remove bridge artifacts. Stopped records can still authenticate agent tokens. Signal validation uses executable name but not full process start identity. A paused remote process receives TERM without the local path's CONT handling.
+**Implemented.** `lifecycle.mjs` unifies Conductor controls, direct controls, DELETE and cleanup. Stop revokes enrollment, attempts owned remote/local process cleanup, closes browser resources and removes credentials. Failures retain a record with per-resource outcomes. Foreground groups are rechecked; external signals require executable/start identity. Paused jobs are resumed before termination. Tests include test-owned processes, revoked tokens and mocked remote failure.
+
+**Remaining gap.** Full provider/remote-owner acceptance and rollback after all possible launch failures remain. PID-based tracking metadata and bridge recovery still depend on D1/T2. A successful transport launch does not prove provider readiness.
 
 **Implementation.**
 

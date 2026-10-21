@@ -70,9 +70,10 @@ export function sshAliases() {
   } catch { return []; }
 }
 const remoteScript = fs.readFileSync(new URL('./remote-reader.py', import.meta.url), 'utf8');
-export async function remoteRead(host, mode, id = '') {
+export async function remoteRead(host, mode, id = '', cursor) {
   validHost(host);
-  const reader = ['python3', '-c', remoteScript, mode, ...(id ? [id] : [])].map(quote).join(' ');
+  if (cursor !== undefined && cursor !== '' && (!Number.isSafeInteger(Number(cursor)) || Number(cursor) < 0)) throw new Error('Invalid output cursor.');
+  const reader = ['python3', '-c', remoteScript, mode, ...(id ? [id] : []), ...(cursor === undefined || cursor === '' ? [] : [String(cursor)])].map(quote).join(' ');
   // Use only privileges the account already has, with no password prompt or permission changes.
   const command = `if sudo -n true 2>/dev/null; then sudo -n ${reader}; else ${reader}; fi`;
   const { stdout } = await run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', host, command], { env, timeout: 25000, maxBuffer: 12 * 1024 * 1024 });

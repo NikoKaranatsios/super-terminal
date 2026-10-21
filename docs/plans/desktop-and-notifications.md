@@ -21,13 +21,15 @@ Sources: [renderer](../../src/app.js), [workspace model](../../src/workspace.mjs
 
 **Decisions.** Full extra-window restoration, tab drag/reordering, and duplicate views within one window are optional extensions. The requested simultaneous views and resizing do not require them. If window restoration is selected, persist distinct window identities/bounds and prevent off-screen restoration.
 
-## U2 — Truthful completion notifications
+## U2 — Conductor-selected notifications
 
-**Current gap.** Explicit turn markers, exit baselines, muted behavior, and watcher deduplication have tests. Native banner display, clicking with windows open/closed, and real provider completion across environments need acceptance. The parser keeps only the latest marker in a bounded read, so multiple completions between observations can be collapsed. An exited unmatched process may leave an alert pointing to a view with no available history. Local scan failures can resemble exits until D1 is addressed.
+**Implemented.** Only Conductor-selected notification records reach the native watcher. Raw turn markers and exits remain Activity data. Decision deduplication, muted behavior, and watcher filtering have tests. The requested task views, session controls, team overview, partial-control feedback and output pagination have fixture renderer checks.
+
+**Current gap.** Native banner display, clicking with windows open/closed, and real provider completion across environments need acceptance. The parser keeps only the latest marker in a bounded read, so multiple completions between observations can be collapsed. An exited unmatched process may leave an alert pointing to a view with no available history. Local scan failures can resemble exits until D1 is addressed.
 
 **Work.**
 
-- Complete the native test-button/banner/click checks and provider completion matrix. Keep “finished a response,” “exited,” and goal completion distinct.
+- Complete the native test-button/banner/click checks and provider completion matrix. Keep response completion, process exit, reported task completion and Conductor notification decisions distinct.
 - Define event handling for multiple markers, truncated/rotated logs, reconnect baselines, and service restarts. Use offsets/cursors or explicit coalescing semantics if needed; avoid rescanning full histories.
 - Store enough safe target metadata to open a saved conversation or a useful Activity explanation after the process disappears. Do not leave a nonexistent target indefinitely “reconnecting.”
 - Keep one notification source across windows. Preserve muted events in Activity without replaying them as new alerts when notifications are enabled again.
@@ -35,7 +37,7 @@ Sources: [renderer](../../src/app.js), [workspace model](../../src/workspace.mjs
 
 **Dependencies.** D1 provides trustworthy health/identity; D2 provides history/target resolution; P2 covers restart behavior.
 
-**Acceptance.** Verified native alerts open the correct conversation or an honest unavailable explanation. Startup history, SSH outages, failed local scans, pauses, commentary, tool calls, cancellations, and muted events produce no false finish alert. Actual exit and response completion remain distinguishable. Repeated windows/polls do not duplicate delivery. The chosen multiple-marker semantics are tested and documented.
+**Acceptance.** Verified native alerts open the correct conversation or an honest unavailable explanation. Startup history, SSH outages, failed local scans, pauses, commentary, tool calls, cancellations, and muted events produce no false finish alert. Actual exit and response completion remain distinguishable in Activity; neither automatically emits a native banner. Repeated windows/polls do not duplicate delivery. The chosen multiple-marker semantics are tested and documented.
 
 ## U3 — Recovery messages and large inventories
 

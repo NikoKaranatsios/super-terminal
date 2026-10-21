@@ -1,8 +1,20 @@
 # Verification evidence and remaining checks
 
-Baseline under discussion: `6726db5`, package `0.4.1`. The evidence below was collected during implementation of that baseline. This documentation change does not itself rerun the runtime suite or reinstall the application. No record here implies verification of all personal agents or provider versions.
+Current feature build: package `0.5.0`, based on `f4252a8`. No record implies verification of every personal agent, provider version or SSH environment.
 
-## Recorded baseline evidence
+## Current feature evidence
+
+| Check | Result and limit |
+| --- | --- |
+| `npm test` | 76 passing tests, including eight real-backend integration subtests and fixture-renderer coverage. No paid model requests or approved-host SSH scans. Test-owned shells, browsers, state directories and sockets are isolated. |
+| `npm run build` / `git diff --check` | Passed. |
+| `npm run test:desktop` | Passed: Electron utility runtime, native PTY, protocol-compatible service reuse, shutdown and tmux survival across backend restart. This is not native window/banner acceptance. |
+| Scoped continuous coordination | Fake-model tests cover cadence, zero-call idle collection, pause/stop, stale in-flight completion, backoff, narrow scope, usage, traces, duplicate actions and concurrent reports. Policy tests reject conflicting task/team aliases, inactive goals and out-of-scope targets. |
+| Tasks and lifecycle | Tests cover migration, legacy goal synchronization, evidence requirements, nested scoped task creation, idempotent replay, stale grants/revisions, helper outboxes, project-root containment, team retries, process identity, credential revocation and partial remote cleanup. |
+| Output and interface | Local/remote output parser parity, record-boundary pagination and stable IDs pass. Fixture browser checks cover working-session/process separation, three task layers, teams, chat scope, partial failures, output refresh and recovery. Wide and narrow layouts were inspected using sanitized data. |
+| Native UI automation | Binding to the installed application timed out. Native interactive and banner acceptance remains unverified; the passing runtime/fixture checks do not replace it. |
+
+## Earlier baseline evidence (`0.4.1`)
 
 | Check | Result and limit |
 | --- | --- |
@@ -49,10 +61,10 @@ These checklists remain unchecked until evidence is recorded; source existence a
 - [ ] **D1/D2:** Local scan failure, partial remote scan, inaccessible owner, same-folder agents, PID reuse, offline restart, and ambiguous/absent history all produce truthful inventory and matching.
 - [ ] **D3/T1:** For Codex, Claude, and Grok in each approved environment where installed, verify launch/resume, original account/cwd, native commands, prompt/role/scope delivery, and readable history. Record unavailable combinations explicitly.
 - [ ] **C1/C2:** A chat-only working session can accept broad topics, correct location, add goals, assign agents at every layer, report progress, wrap up, and carry unresolved work. Check a remote scoped project specifically.
-- [ ] **C3:** Bounded large-inventory context, multi-round usage, automatic read-only briefing, duplicate proposals, cancellation, and action-limit reporting pass with a fake model adapter before any intentional model smoke check.
+- [x] **C3 (fake adapter):** Bounded large-inventory context, multi-round usage, automatic read-only briefing, duplicate proposals, cancellation, and action-limit reporting pass with a fake model adapter before any intentional model smoke check.
 - [ ] **T2/T3:** Two managed providers exchange readable scoped messages; reassignment reaches the inbox; bridge/service/SSH recovery preserves the agent; each stop/removal/cleanup path has consistent, verified resource outcomes.
 - [ ] **U1:** Native separate windows, simultaneous panes, same-session attachments, menus/shortcuts, pointer/keyboard sizing, clipboard, quit/reopen, and missing-agent restoration work without stopping agents.
-- [ ] **U2:** A real successful provider response and a separate process exit produce correctly labelled native alerts; clicking works with windows open and closed. Verify mute, baseline, outage, missing-target, and duplicate-window behavior.
+- [ ] **U2:** A Conductor-selected notification produces a native alert; clicking works with windows open and closed. Raw response completion and process exit remain Activity data without automatic banners. Verify mute, baseline, outage, missing-target, and duplicate-window behavior.
 - [ ] **U3/P2:** Initial state failure, backend replacement/token rotation, unexpected service exit, large history lists, and source warnings recover without losing usable views or drafts.
 - [ ] **B1/B2:** Pending browser launch versus cleanup, concurrent commands, popup/close cases, remote screenshot transfer, profile retention, and control-page boundary checks pass without personal browser access.
 - [ ] **P1/P3:** Installer failure/rollback and persisted-state migrations pass in disposable fixtures; failure reports identify recoverable artifacts and preserve original data.
@@ -60,3 +72,5 @@ These checklists remain unchecked until evidence is recorded; source existence a
 ## Evidence format
 
 For each completed item, record the source revision, scenario, environment/provider category, command or native interaction, observed result, and remaining limitation. Omit private targets and conversation content. Use pass/fail/unavailable/unverified explicitly. No dates, estimates, deadlines, or delivery horizons are needed.
+
+New focused suites: [continuous loop](../test/conductor-loop.test.mjs), [action scope](../test/conductor-policy.test.mjs), [helper outbox](../test/bridge.test.mjs), [tasks](../test/tasks.test.mjs), [lifecycle](../test/lifecycle.test.mjs), [provider output](../test/transcript.test.mjs), [view projection](../test/work-views.test.mjs), and [fixture renderer](../test/work-ui.test.mjs). These use synthetic examples, not personal transcripts.

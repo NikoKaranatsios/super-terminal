@@ -37,13 +37,14 @@ Closing a view kills its PTY attachment, not tmux. Closing every window keeps th
 | Saved conversation | Provider-owned history, identified by provider/session ID and environment. The platform displays bounded text and source metadata. |
 | Persistent project | Top-level `state.projects` metadata for an existing host/folder; active or archived. |
 | Human working session | `state.workSessions` entry with active/paused/wrapped state, notes, summary, nested projects, and goals. This is separate from a terminal session. |
-| Scoped project/goal | Nested working-session records. Goals have todo/doing/done state and notes. These project IDs are currently distinct from top-level project IDs. |
+| Scoped project/goal | Nested working-session records. Goals mirror canonical task state and notes; nested projects link to persistent projects through `canonicalProjectId`. |
+| Task | Canonical ID, project, optional session scope/parent, title, todo/doing/blocked/done/stopped state, notes, assigned agent, revision, attributed evidence and bounded activity. |
 | Scope | `{workSessionId, projectId, goalId}` selecting a session, a project within it, or a goal within that project. |
-| Team/group | Team record has a name, mission, location, optional scope, and sometimes a project link. Managed membership and shared context currently use the group name. |
+| Team/group | Team record has a name, mission, location, optional scope, and sometimes a project link. Managed membership uses stable team IDs; legacy peer matching also checks host/folder. Shared Markdown still uses the group name. |
 | Mailbox message | ID, sender, recipient, group, text, recorded timestamp, and read flag. Fetching the inbox marks messages read; it does not prove task acceptance. |
-| Activity event | Successful response completion or observed process exit, with target, source identity, and deduplication key. It is not a goal-completion record. |
+| Activity event | Response completion, observed process exit, or a Conductor-selected notification, with target and deduplication key. Only explicit Conductor notification choices reach native banners. |
 
-The separate project concepts, group-name identity, and PID identity are documented work in [C1](plans/conductor-and-sessions.md), [T2](plans/teams-and-agent-lifecycle.md), and [D1](plans/discovery-and-history.md).
+Remaining context-name and PID identity constraints are documented work in [C1](plans/conductor-and-sessions.md), [T2](plans/teams-and-agent-lifecycle.md), and [D1](plans/discovery-and-history.md).
 
 ## Discovery and history flow
 
@@ -52,7 +53,7 @@ The separate project concepts, group-name identity, and PID identity are documen
 3. Combine process rows with provider history metadata. Matching prefers a recorded history/resume ID or unique open transcript file; a unique provider/cwd/start match is a fallback. Ambiguity remains unlinked. A shared runtime can expose multiple linked files.
 4. Publish current inventory plus coverage/errors. Failed SSH scans clear their live process rows and preserve in-memory history metadata. Local failures do not yet have equivalent structured health reporting.
 
-[history.mjs](../server/history.mjs) reads local Codex SQLite/JSONL, Claude project JSONL, and Grok summary/chat JSONL. [remote-reader.py](../server/remote-reader.py) implements the remote variants. Source histories are never written by these readers. Reads are bounded, tolerate partial JSONL records, omit tool output, and return recent text. Codex's normal SQLite index includes up to 2,000 unarchived threads per account; fallback readers and other providers have different coverage. Reading a conversation is not a complete transcript export.
+[history.mjs](../server/history.mjs) reads local Codex SQLite/JSONL, Claude project JSONL, and Grok summary/chat JSONL. [remote-reader.py](../server/remote-reader.py) implements the remote variants. Source histories are never written by these readers. Saved-output pages include messages, commentary, tool calls and results, using backward byte cursors and stable event IDs. Compact messages are a separate projection for model input. Reads tolerate partial JSONL records and disclose unavailable or oversized content. Codex's normal SQLite index includes up to 2,000 unarchived threads per account; fallback readers and other providers have different coverage. Reading a conversation is not a complete transcript export.
 
 Local and remote indexes refresh independently with cached results; refreshes make no model calls. Remote indexes and transcripts are memory-only. History source locations, schema assumptions, owner permissions, and missing files can limit visibility. See [D1–D3](plans/discovery-and-history.md).
 
@@ -62,17 +63,17 @@ Local and remote indexes refresh independently with cached results; refreshes ma
 
 The WebSocket route validates the desktop token and origin before starting a `node-pty` attachment. It supports managed local transport, discovered local default tmux, and discovered remote tmux. Input and resize messages have size/type limits. Ordinary external TTYs are not attached: their saved conversations are displayed read-only.
 
-[agent-platform.mjs](../server/agent-platform.mjs) supplies the provider default prompt, task, team role/mission, scope, mailbox instructions, and browser helper commands. Managed agent credentials authorize only `/api/agent`. Same-group agents or agents sharing a human working session can communicate; external tracking assignments do not enroll a process.
+[agent-platform.mjs](../server/agent-platform.mjs) supplies the provider default prompt, task, team role/mission, scope, mailbox instructions, and browser helper commands. Managed agent credentials authorize only `/api/agent`. Same-team agents, legacy same-group/location agents, or agents sharing a human working session can communicate; external tracking assignments do not enroll a process.
 
-Remote helpers use a loopback-only reverse SSH forward to the local service. [bridge.py](../server/bridge.py) uses Python's standard library and offers `peers`, `inbox`, `send`, `context`, `progress`, and `browser`. `context` reads the team's mission/scope and shared Markdown. Writing shared Markdown is available through the desktop API (and ordinary local filesystem access where permitted), not a dedicated helper write command. Progress is limited to the agent's scope and queues a note to Conductor.
+Remote helpers use a loopback-only reverse SSH forward to the local service. [bridge.py](../server/bridge.py) uses Python's standard library and offers mailbox/context, legacy progress, `task create/report/list/flush/pending/discard`, and browser commands. Task events enter a private durable outbox before submission, carry enrollment/assignment identity and a monotonic sequence, and retry idempotently. `context` reads the team's mission/scope and shared Markdown. Writing shared Markdown is available through the desktop API (and ordinary local filesystem access where permitted), not a dedicated helper write command. Task creation/progress is limited to enrollment scope and updates canonical state without model calls. It does not grant new execution authority.
 
 The browser manager owns a persistent profile per managed ID, including for remote agents. Remote browser commands execute locally; screenshots are returned to and written on the helper's machine. See [B1–B2](plans/browsers-and-runtime.md) for lifecycle limits and the isolation boundary.
 
 ## Conductor flow
 
-[coordinator.mjs](../server/coordinator.mjs) maintains one in-flight reply and persists conversation, memory, assessments, and action results. The first automatic briefing is enabled by default and starts only with empty Conductor history once environment scans have a result. Other model requests follow user prompts. Incoming agent messages are stored without automatically invoking the model.
+[coordinator.mjs](../server/coordinator.mjs) maintains one in-flight reply and persists conversation, memory, assessments, action results, aggregate usage and provider-visible trace events. The optional first briefing remains read-only. [conductor-loop.mjs](../server/conductor-loop.mjs) continuously collects structured work every five seconds. Eligible changes can trigger decisions no more often than every 30 seconds; unchanged active work uses a two-minute pulse and other unfinished work a ten-minute pulse. Empty or unchanged completed scopes make no model calls. Errors back off to a maximum 15 minutes. These are runtime cadence controls, not delivery promises. Run/pause/stop intent survives restarts; the loop runs only while the backend runs.
 
-The snapshot includes live terminals, small managed-pane excerpts, working sessions/projects/teams, recent mail, selected history evidence, and coverage counts. History review selects up to 18 pending records distributed across environments plus up to six relevant records, using small recent message excerpts. Assessments are accepted only for supplied evidence IDs and are versioned against history updates; unchanged assessments can be reused.
+Snapshots include bounded tasks, assigned agents, relevant project/session/team metadata, attributed mail and omission counts. Continuous rounds use structured reports, not repeated transcript reads. Manual reviews read up to four pending and two relevant history excerpts. Serialized model input is capped at 24,000 bytes, not an exact token amount. Fresh active-scope checks in [conductor-policy.mjs](../server/conductor-policy.mjs) run before each autonomous action; archived projects, paused/wrapped sessions, stopped work and unrelated external processes cannot acquire authority from agent messages.
 
 The installed Codex CLI invokes `gpt-6-luna` with low reasoning, structured output, a read-only sandbox, and shell/plugin/multi-agent/web capabilities disabled. It uses existing Codex login; bounded work context is sent through that account. Provider sign-in data is not copied into the repository.
 
@@ -80,13 +81,13 @@ The [schema](../server/conductor-schema.json) currently permits:
 
 | Action family | Actions |
 | --- | --- |
-| Agents | `start_agent`, `resume_conversation`, `assign_agent`, `session_state`, `cleanup` |
-| Teams/messages | `start_team`, `message_agent` |
+| Agents | `start_agent`, `resume_conversation`, `assign_agent`, `rename_agent`, `session_state`, `cleanup` |
+| Teams/messages | `start_team`, `update_team`, `brief_team`, `add_team_members`, `message_agent`, `prompt_agent` |
 | Persistent projects | `create_project`, `update_project` |
-| Human sessions/goals | `start_work_session`, `work_session_state`, `goal_progress` |
-| Evidence | `search_history`, `read_conversation` |
+| Human sessions/goals | `start_work_session`, `work_session_state`, `create_goal`, `update_goal`, `create_task`, `update_task`, `goal_progress` |
+| Evidence / attention | `search_history`, `read_conversation`, `notify` |
 
-[performAction()](../server/conductor-actions.mjs) validates and executes actions; no arbitrary Conductor shell exists. A reply allows at most three model rounds, with at most two executed batches of four actions. Results return to the model for a final grounded answer. Automatic briefings may only search/read. The final round cannot execute more actions. Cancellation stops the model request and does not roll back actions. Usage currently records only the final round. Some control routes are not reachable through this action set; see [C1–C3](plans/conductor-and-sessions.md) and [T2](plans/teams-and-agent-lifecycle.md).
+[performAction()](../server/conductor-actions.mjs) validates and executes actions; no arbitrary Conductor shell exists. A reply allows at most three model rounds, with at most two executed batches of four actions. Results return to the model for a final grounded answer. Automatic briefings may only search/read. The final round cannot execute more actions. Cancellation stops the model request and does not roll back actions. Usage accumulates across every round with available telemetry. Continuous launch/message/notification receipts prevent exact repeated actions, and team retries reuse existing roles. Failed or partial effects remain visible. See [C1–C3](plans/conductor-and-sessions.md) and [T2](plans/teams-and-agent-lifecycle.md).
 
 ## Control surfaces and authentication
 
@@ -94,13 +95,15 @@ The service binds to `127.0.0.1`. It validates Host and supplied Origin, applies
 
 | Surface | Capability |
 | --- | --- |
-| `/api/state`, `/api/history/:id`, `/api/activity` | Inventory, bounded saved text, activity |
+| `/api/state`, `/api/history/:id`, `/api/activity` | Inventory, paginated saved output, activity |
 | `/api/sessions`, `/api/sessions/:id` | Create/resume, patch metadata/scope, delete managed record/transport |
+| `/api/sessions/:id/control`, `/api/sessions/:id/prompt` | Shared process lifecycle and cooperative prompt queue |
+| `/api/tasks` | Canonical task listing and validated create/update |
 | `/api/hosts`, `/api/hosts/scan` | Select/scan an already-allowed host, never add an arbitrary target |
 | `/api/work-sessions/...` | Human-session records, nested projects, goals |
 | `/api/teams/...`, `/api/messages`, `/api/context` | Team records/launches/briefings, mailbox, shared text |
 | `/api/prompts`, `/api/preferences` | Provider startup prompts and small preference set |
-| `/api/coordinator`, `/api/coordinator/cancel` | Single Conductor request/cancellation |
+| `/api/coordinator`, `/api/coordinator/cancel`, `/api/coordinator/control` | Single request/cancellation and persistent loop controls |
 | `/api/browser/:id` | Browser operations for a managed agent, desktop-authorized |
 | `/api/agent` | Scoped helper operations only |
 | `/terminal` | Authenticated PTY attachment, input, resize, and output |

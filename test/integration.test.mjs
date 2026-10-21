@@ -123,7 +123,7 @@ test('real PTYs, persistent sessions, scoped mailboxes, and isolated browsers', 
       assert.equal(forbidden.status, 400, 'Agent browser must not load the dashboard bootstrap token');
     } finally { fixture.closeAllConnections(); await new Promise(r => fixture.close(r)); }
   });
-  await t.test('teams launch role terminals and reject duplicate running roles', async () => {
+  await t.test('teams launch role terminals and reuse duplicate running roles', async () => {
     const team=await api('/teams','POST',{name:'Verification team',mission:'Check local integration.',cwd:dir,host:'local'});
     await api('/sessions/'+one.id,'PATCH',{group:team.name});
     const briefing=await api('/teams/'+team.id+'/brief','POST',{});
@@ -132,7 +132,10 @@ test('real PTYs, persistent sessions, scoped mailboxes, and isolated browsers', 
     assert.equal(launched.launched.length,1);
     assert.equal(launched.errors.length,0);
     const duplicate=await fetch(base+'/api/teams/'+team.id+'/start',{method:'POST',headers:{'x-super-terminal':auth,'content-type':'application/json'},body:JSON.stringify({roles:[{name:'Verifier',provider:'shell'}]})});
-    assert.equal(duplicate.status,400);
+    assert.equal(duplicate.status,200);
+    const retried=await duplicate.json();
+    assert.equal(retried.launched.length,0);
+    assert.equal(retried.existing.length,1);
   });
   await t.test('working sessions support scoped agents, progress, wrap-up and carry-forward', async () => {
     const work=await api('/work-sessions','POST',{title:'Verification work',topics:'Alpha: Finish API\nBeta: Verify interface'});
@@ -152,5 +155,47 @@ test('real PTYs, persistent sessions, scoped mailboxes, and isolated browsers', 
     assert.equal(next.projects.length,1);
     assert.equal(next.projects[0].name,'Beta');
     assert.equal(next.projects[0].goals[0].status,'todo');
+  });
+  await t.test('tasks are automatic, scoped, revisioned and shared with legacy goals', async () => {
+    const work=await api('/work-sessions','POST',{title:'Task protocol fixture',topics:'Sample: Verify structured tasks'});
+    const project=work.projects[0], goal=project.goals[0];
+    const state=await api('/state');
+    const canonical=state.tasks.find(task=>task.id===goal.id);
+    assert.ok(state.projects.some(p=>p.id===canonical.projectId));
+    await api('/sessions/'+one.id,'PATCH',{scope:{workSessionId:work.id,projectId:project.id,goalId:goal.id}});
+    const stored=JSON.parse(fs.readFileSync(path.join(dir,'state.json')));
+    const token=stored.sessions.find(s=>s.id===one.id).agentToken;
+    const agent=async body=>{
+      const response=await fetch(base+'/api/agent',{method:'POST',headers:{'x-super-terminal-agent':token,'content-type':'application/json'},body:JSON.stringify(body)});
+      return {status:response.status,data:await response.json()};
+    };
+    const input={command:'task',operation:'create',clientKey:'verify-retry',eventId:'create-once',title:'Check retry handling',status:'doing'};
+    const first=await agent(input),again=await agent(input);
+    assert.equal(first.status,200,JSON.stringify(first.data));
+    assert.equal(again.data.task.id,first.data.task.id);
+    assert.equal(again.data.duplicate,true);
+    assert.equal((await agent({...input,title:'Changed payload'})).status,400);
+    const report=await agent({command:'task',taskId:first.data.task.id,eventId:'report-once',expectedRevision:1,status:'done',notes:'Verified the isolated retry fixture.'});
+    assert.equal(report.status,200,JSON.stringify(report.data));
+    assert.equal(report.data.task.revision,2);
+    assert.equal((await agent({command:'task',taskId:first.data.task.id,eventId:'stale',expectedRevision:1,status:'doing'})).status,400);
+    const noEvidence=await fetch(base+'/api/work-sessions/'+work.id+'/goals/'+goal.id,{method:'PATCH',headers:{'x-super-terminal':auth,'content-type':'application/json'},body:JSON.stringify({status:'done'})});
+    assert.equal(noEvidence.status,400);
+    const prompt=await api('/sessions/'+one.id+'/prompt','POST',{text:'Review the fixture at the next checkpoint.'});
+    assert.equal(prompt.delivery,'queued');
+  });
+  await t.test('continuous controls are persisted and process stop revokes enrollment', async () => {
+    assert.equal((await api('/coordinator/control','POST',{state:'paused'})).state,'paused');
+    assert.equal((await api('/state')).coordinator.loop.state,'paused');
+    assert.equal((await api('/coordinator/control','POST',{state:'stopped'})).state,'stopped');
+    const stored=JSON.parse(fs.readFileSync(path.join(dir,'state.json')));
+    const credential=stored.sessions.find(s=>s.id===two.id).agentToken;
+    const stopped=await api('/sessions/'+two.id+'/control','POST',{state:'stopped'});
+    assert.equal(stopped.state,'stopped',JSON.stringify(stopped));
+    assert.equal(stopped.ok,true,JSON.stringify(stopped));
+    const rejected=await fetch(base+'/api/agent',{method:'POST',headers:{'x-super-terminal-agent':credential,'content-type':'application/json'},body:JSON.stringify({command:'peers'})});
+    assert.equal(rejected.status,403);
+    const repeated=await api('/sessions/'+two.id+'/control','POST',{state:'stopped'});
+    assert.equal(repeated.state,'stopped',JSON.stringify(repeated));
   });
 });

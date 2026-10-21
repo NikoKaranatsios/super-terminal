@@ -24,7 +24,9 @@ Sources: [discovery](../../server/discovery.mjs), [remote reader](../../server/r
 
 ## D2 — History coverage, matching, and offline recovery
 
-**Current gap.** Saved text is bounded and omits tools and older content. Codex indexing caps unarchived threads; Claude subagent files and unsupported formats are not a complete agent inventory. A remote index survives a failed scan only in the running service's memory. Many live processes lack a deterministically matched transcript. The resume endpoint checks managed duplicates, but does not independently reconcile every possible external live match.
+**Implemented.** Saved-output pages include messages, commentary, tool calls and results, with stable byte-offset event IDs, backward pagination and preserved recent output. Local/remote parsers have parity fixtures. Individual records over 8 MiB and missing logs are disclosed.
+
+**Current gap.** Provider-internal or unlogged output cannot be reconstructed. Codex indexing caps unarchived threads; Claude subagent files and unsupported formats are not a complete agent inventory. A remote index survives a failed scan only in the running service's memory. Many live processes lack a deterministically matched transcript. The resume endpoint checks managed duplicates, but does not independently reconcile every possible external live match.
 
 **Implementation.**
 

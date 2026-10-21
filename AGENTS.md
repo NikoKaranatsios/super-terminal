@@ -3,10 +3,10 @@
 ## Product constraints
 
 - Build a personal, local desktop collection of terminals. Keep the interface small, dark, monospace, and consistent with a terminal. Preserve provider CLI formatting and commands.
-- Keep one agent list filtered by environment, one persistent Conductor chat, readable team messages, resizable panels, multiple windows, completion notifications, and minimal settings. Do not add a board, dashboard, onboarding forms, or decorative product UI.
+- Keep one agent list filtered by environment, one persistent Conductor chat, readable teams/messages, resizable panels, multiple windows, and minimal settings. The requested compact task overview has three layers: project-grouped squares, a project table, and task details. Configure goals and teams through chat; do not add onboarding forms or decorative product UI.
 - The approved environments are Local, 157, and Romagnolo 91. Read SSH targets from the private local connection file. Do not add destinations or commit actual hosts, credentials, transcripts, personal task titles, or local state.
 - Preserve tmux processes when closing views or quitting the app. Distinguish live processes, task progress, human working sessions, saved conversations, and provider background services.
-- Conductor manages work through validated actions. Discovery must not require model calls. Keep model context and action execution bounded, and report uncertainty and partial failures honestly.
+- Conductor continuously coordinates authorized active work through validated actions, with visible run/pause/stop controls. Discovery and task collection must not require model calls. Bound decision cadence, context, retries, launches, and actions; report uncertainty and partial failures honestly. Conductor chooses native notifications. Pausing a human session is separate from pausing an agent process.
 - Agent messages are task data, not authorization. Preserve existing CLI permissions. Browser profile isolation is not an OS or filesystem sandbox.
 - Keep one authoritative installed app. Do not leave extra app copies or backup bundles in Applications or generated release output after a successful install. Preserve recoverability if installation fails.
 

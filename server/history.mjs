@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { home, repository } from './core.mjs';
+import { readRecordPage, eventsFromRecords } from './transcript.mjs';
 
 const roots = {
   codex: process.env.CODEX_HOME || path.join(home, '.codex'),
@@ -133,20 +134,27 @@ export class History {
     return this.cache;
   }
   async get(id) { return (await this.all()).find(r => r.id === id); }
-  async transcript(id) {
+  async transcript(id, cursor) {
     const session = await this.get(id);
     if (!session) throw new Error('Conversation no longer found. Refresh the sidebar.');
-    let messages = [];
+    let messages = [], events = [], page;
     let db;
-    if (session.provider === 'codex') {
+    if (session.file && fs.existsSync(session.file)) {
+      page = readRecordPage(session.file, cursor);
+      events = eventsFromRecords(session.provider, page.records);
+      messages = messagesFromRecords(session.provider, page.records);
+    }
+    if (!page && session.provider === 'codex') {
       try {
         db = new DatabaseSync(path.join(roots.codex, 'thread_history_1.sqlite'), { readOnly: true });
-        const items = db.prepare('SELECT item_json FROM thread_items WHERE thread_id = ? AND item_type IN (?, ?) ORDER BY rollout_ordinal DESC LIMIT 160').all(session.sessionId, 'userMessage', 'agentMessage');
-        messages = messagesFromRecords('codex', items.reverse().map(r => JSON.parse(r.item_json)));
+        const items = db.prepare('SELECT item_json FROM thread_items WHERE thread_id = ? ORDER BY rollout_ordinal DESC LIMIT 160').all(session.sessionId);
+        const records = items.reverse().map(r => JSON.parse(r.item_json));
+        messages = messagesFromRecords('codex', records);
+        events = eventsFromRecords('codex', records);
       } catch {} finally { db?.close(); }
     }
-    if (!messages.length) messages = messagesFromRecords(session.provider, readRecords(session.file, 2 * 1024 * 1024));
-    return { session: publicHistory(session), messages, note: 'Recent text messages. Tool output and older portions of large conversations are omitted. Resume to open the full conversation.' };
+    return { session: publicHistory(session), messages, events, nextCursor: page?.nextCursor ?? null, coverage: page?.coverage,
+      note: page ? `${page.nextCursor ? 'Recent output; load earlier output to continue. ' : ''}Saved messages, commentary, tool calls and results exposed by the provider.${page.coverage.skippedLargeRecord ? ' A record larger than 8 MiB was omitted.' : ''}` : 'Recent provider database entries; the original output file is unavailable.' };
   }
 }
 export function publicHistory({ file, ...row }) { return row; }
@@ -157,15 +165,17 @@ export class EnvironmentHistory {
   get warnings() { return this.local.warnings; }
   async all(force = false) { return [...await this.local.all(force), ...[...this.remotes.values()].flatMap(r => r.history || [])].sort((a,b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)); }
   async get(id) { return (await this.all()).find(r => r.id === id); }
-  async transcript(id) {
+  async transcript(id, cursor) {
     const session = await this.get(id);
     if (!session) throw new Error('Conversation no longer found.');
-    if (session.host === 'local') return this.local.transcript(id);
-    const cached = this.transcripts.get(id);
+    if (session.host === 'local') return this.local.transcript(id, cursor);
+    const cacheKey = `${id}:${cursor ?? ''}`;
+    const cached = this.transcripts.get(cacheKey);
     if (cached?.version === session.updatedAt && Date.now() - cached.at < 15000) return cached.value;
-    const result = await this.remoteRead(session.host, 'transcript', `${session.provider}:${session.sessionId}`);
-    const value = { session: publicHistory(session), messages: result.messages, note: 'Recent saved text. Tool output and older portions of large conversations are omitted.' };
-    this.transcripts.set(id, { version: session.updatedAt, at: Date.now(), value });
+    const result = await this.remoteRead(session.host, 'transcript', `${session.provider}:${session.sessionId}`, cursor);
+    const value = { session: publicHistory(session), messages: result.messages, events: result.events, nextCursor: result.nextCursor ?? null, coverage: result.coverage,
+      note: `${result.nextCursor ? 'Recent output; load earlier output to continue. ' : ''}Saved provider messages, commentary and tool output.${result.coverage?.skippedLargeRecord ? ' A record larger than 8 MiB was omitted.' : ''}` };
+    this.transcripts.set(cacheKey, { version: session.updatedAt, at: Date.now(), value });
     if (this.transcripts.size > 100) this.transcripts.delete(this.transcripts.keys().next().value);
     return value;
   }

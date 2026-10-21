@@ -53,7 +53,7 @@ async function sendAction(action) {
 }
 function notify(event) {
   if (!Notification.isSupported()) return false;
-  const notification = new Notification({ title: event.kind === 'test' ? 'Super Terminal notifications' : `${event.provider} ${event.kind === 'finished' ? 'finished a response' : 'exited'}`, body: event.kind === 'test' ? 'Agent completion alerts will appear here.' : `${event.title}\n${event.host === 'local' ? 'Local' : event.host}`, silent: false });
+  const notification = new Notification({ title: event.kind === 'test' ? 'Super Terminal notifications' : event.title || 'Conductor', body: event.kind === 'test' ? 'Conductor will choose which updates need your attention.' : event.text || '', silent: false });
   notifications.add(notification);
   notification.on('click', () => {
     if (!currentWindow()) createWindow({ view: event.target || 'activity', environment: event.host || 'local' });

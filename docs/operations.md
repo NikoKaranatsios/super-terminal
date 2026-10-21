@@ -23,10 +23,10 @@ Default data directory: `~/.super-terminal`, overridden by `SUPER_TERMINAL_DATA`
 | Path | Purpose and retention |
 | --- | --- |
 | `connections.json` | Private approved SSH names/targets. Only Local, 157, and Romagnolo 91 are intended for this installation. |
-| `state.json` | Managed records/tokens, teams, mail, project/session/goal metadata, prompts/preferences, Conductor chat/memory/assessments, and activity. Preserve this file during troubleshooting. |
+| `state.json` | Managed records/tokens, teams, mail, project/session/task metadata, evidence/event receipts, prompts/preferences, Conductor chat/memory/assessments/action receipts/loop intent/usage, and activity. Preserve this file during troubleshooting. |
 | `state.json.tmp` | Temporary replacement during saves, not a second installed version. |
 | `context/` | Group shared Markdown, addressed by a hash of group name. |
-| `agents/` | Private local helper credential files. Their cleanup lifecycle is tracked in T3. |
+| `agents/` | Private local helper credentials and task outboxes. Stopping enrollment revokes access and removes credentials; pending outbox data is private runtime evidence. |
 | `browsers/` | Per-managed-session browser profiles. Profiles can contain cookies and page storage. |
 | `screenshots/` | Helper screenshot output on the agent's machine; a repeated screenshot for an ID replaces its image. |
 | `coordinator/` | Conductor working directory and transient structured output; completed output files are removed. |
@@ -36,7 +36,7 @@ Default data directory: `~/.super-terminal`, overridden by `SUPER_TERMINAL_DATA`
 
 On a remote agent account, `~/.super-terminal/bridge.py` and `agent-<id>.json` support the reverse tunnel; screenshots are also saved under that account. Provider CLIs keep their own sign-ins and histories in their provider-owned locations. Remote history indexes/transcripts are currently in-memory caches in the local service; a service restart loses that offline cache.
 
-Do not commit this data or use personal transcripts as test fixtures. A model request through Conductor sends selected work context to the existing Codex account. Process/history discovery itself makes no model calls.
+Do not commit this data or use personal transcripts as test fixtures. A model request through Conductor sends selected work context to the existing Codex account. Process/history discovery and structured task collection make no model calls. Enabled continuous decision rounds send bounded active work context through the existing Codex account. With no eligible work the loop listens without paid idle calls.
 
 ## Expected lifecycle
 
@@ -47,7 +47,8 @@ Do not commit this data or use personal transcripts as test fixtures. A model re
 | Quit app | Stops an owned service, browser contexts, and Conductor request; tmux survives. A separately started compatible reused service is left running. |
 | Pause/resume agent | Conductor signals the selected process/foreground job when identifiable and permitted. Shared provider runtimes are protected. |
 | Pause/wrap human session | Updates session metadata, not agent processes. |
-| Stop/cleanup | Current paths differ for remote transport, browser, token, and artifacts; see [T3](plans/teams-and-agent-lifecycle.md). Cleanup does not erase provider conversations or project files. |
+| Stop/cleanup | Shared lifecycle revokes credentials and attempts owned process/browser/bridge cleanup. Partial remote failures retain a retryable record and never claim confirmed termination. Project files/provider histories remain. |
+| Pause/stop Conductor | Stops subsequent continuous rounds and cancels an in-flight autonomous reply. Recorded actions remain; agent processes continue. Loop intent persists. |
 | Reboot | Ends processes; persisted app/provider data remains. |
 
 ## Troubleshooting
@@ -64,7 +65,7 @@ Do not commit this data or use personal transcripts as test fixtures. A model re
 | External conversation unavailable | Check whether provider history is readable or ambiguous. The platform cannot reconstruct absent logs or attach arbitrary terminal stdin. Use the original CLI for unsupported history. |
 | CLI missing after Finder launch | Check the installed executable/login-shell PATH and provider sign-in. The app imports login-shell PATH and common CLI directories. |
 | Browser tool fails to start | Check a supported local Chrome/Chromium executable or `SUPER_TERMINAL_BROWSER`; a configured remote agent still uses the local service's browser executable. |
-| No completion banner | Check Activity, the notification setting/test control, and macOS notification/Focus settings. A successful response marker or actual exit is required; idle/running is not completion. |
+| No completion banner | Check Activity, the notification setting/test control, and macOS notification/Focus settings. Conductor must select a notification; raw response/exit events alone do not emit banners. The loop must be enabled to make new attention decisions. |
 | Unreadable state | Preserve `state.json` and inspect the specific parse/validation error. Do not overwrite it with an empty state. Nested validation/migration improvements are tracked in P3. |
 
 For a shareable diagnosis, record the application/source version, failing surface, error text with private details removed, source health, and whether unaffected views still work. Keep tokens, private host targets, transcript bodies, and sign-in material out of issues and commits.

@@ -44,7 +44,16 @@ test('native watcher skips historical events, deduplicates and honors notificati
   let events=[{id:'old'}],enabled=true;const delivered=[];
   const watcher=watchActivity({origin:'http://127.0.0.1',interval:100000,deliver:e=>delivered.push(e.id),fetcher:async url=>url.endsWith('/')?{text:async()=>'<meta name="super-terminal-token" content="test">'}:{ok:true,json:async()=>({events,enabled})}});
   await new Promise(r=>setImmediate(r));
-  events.push({id:'new'});await watcher.poll();await watcher.poll();assert.deepEqual(delivered,['new']);
+  events.push({id:'raw-completion',kind:'finished'});await watcher.poll();assert.deepEqual(delivered,[]);
+  events.push({id:'new',kind:'conductor',notify:true});await watcher.poll();await watcher.poll();assert.deepEqual(delivered,['new']);
   enabled=false;events.push({id:'muted'});await watcher.poll();enabled=true;await watcher.poll();assert.deepEqual(delivered,['new']);
   watcher.stop();
+});
+test('Conductor notification choices persist and duplicate choices do not repeat',()=>{
+  const store={state:{},save(){}};const monitor=new ActivityMonitor(store);
+  const choice={title:'Review needed',text:'A test failed.',target:'conductor'};
+  assert.equal(monitor.notify(choice).notify,true);
+  assert.equal(monitor.notify(choice).duplicate,true);
+  assert.equal(store.state.activity.length,1);
+  assert.throws(()=>monitor.notify({...choice,text:''}));
 });

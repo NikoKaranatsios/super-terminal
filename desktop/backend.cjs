@@ -13,7 +13,7 @@ async function probeBackend(origin, dataDir) {
   let value;
   try { value = await response.json(); } catch {}
   const dataKey = createHash('sha256').update(path.resolve(dataDir)).digest('hex');
-  if (!response.ok || value?.product !== 'super-terminal' || value.protocol !== 1 || value.dataKey !== dataKey) {
+  if (!response.ok || value?.product !== 'super-terminal' || value.protocol !== 2 || value.dataKey !== dataKey) {
     throw new Error(`Port ${new URL(origin).port} is occupied by another service or an older Super Terminal version. Stop that service before reopening this app. Your agent terminals can keep running.`);
   }
   return value;

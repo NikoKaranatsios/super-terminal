@@ -7,9 +7,13 @@
 </head>
 <body>
   <aside id="sidebar">
-    <select id="environment" data-requires-state aria-label="Environment"><option value="local">Local</option></select>
+    <section id="working-session" aria-label="Working session"><div class="empty">Connecting to working sessions…</div></section>
     <button id="conductor-nav" class="nav-item" data-requires-state>Conductor<kbd>⌘1</kbd></button>
+    <button id="overview-nav" class="nav-item" data-work-view="overview" data-requires-state>All projects</button>
+    <button id="teams-nav" class="nav-item" data-work-view="teams" data-requires-state>Teams</button>
     <button id="team-messages-nav" class="nav-item" data-requires-state hidden>Team messages</button>
+    <label id="environment-label" for="environment">Agent environment</label>
+    <select id="environment" data-requires-state aria-label="Agent environment"><option value="local">Local</option></select>
     <div id="environment-status" role="status"></div>
     <nav id="terminals" aria-label="Running terminals"></nav>
     <details id="history"><summary>Conversations <span id="history-count"></span></summary><div id="history-list"></div></details>
