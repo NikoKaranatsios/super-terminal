@@ -1,4 +1,4 @@
-export const LOOP_INTERVALS = Object.freeze({ collect: 5000, changed: 30000, active: 120000, idle: 600000, maxBackoff: 900000 });
+export const LOOP_INTERVALS = Object.freeze({ collect: 5000, changed: 30000, maxBackoff: 900000 });
 
 // Scheduling and collection contain no provider/model calls. Only decide() does.
 export class ConductorLoop {
@@ -10,6 +10,7 @@ export class ConductorLoop {
     this.timer = null; this.enabled = false; this.ticking = false; this.generation = 0;
   }
   start() { this.enabled = true; this.schedule(0); }
+  wake() { this.clearTimer(this.timer); this.timer = null; this.schedule(0); }
   stop() { this.enabled = false; this.generation++; this.clearTimer(this.timer); this.timer = null; }
   control(value) {
     if (!['running', 'paused', 'stopped'].includes(value)) throw new Error('Choose running, paused, or stopped.');
@@ -32,8 +33,11 @@ export class ConductorLoop {
       if (generation !== this.generation || !this.enabled || this.state.state !== 'running') return;
       this.state.lastCollectedAt = new Date(this.now()).toISOString();
       this.state.coverage = data.coverage || null;
+      this.state.observedProgress = data.observations?.length || 0;
+      this.state.pendingProgress = data.pendingObservationIds?.length || 0;
+      this.state.pendingProjects = data.projectRounds?.length || 0;
       // Seed a completed/empty baseline without a paid historical-completion pulse.
-      if (!data.eligible || (!data.hasWork && !this.state.lastSignature)) {
+      if (!data.eligible || (!data.hasWork && !this.state.lastSignature && !data.pendingReview)) {
         this.state.lastSignature = data.signature;
         this.state.nextRoundAt = null; this.save(); return;
       }
@@ -41,8 +45,8 @@ export class ConductorLoop {
       const last = Date.parse(this.state.lastRoundAt || '') || 0;
       const retry = Date.parse(this.state.retryAt || '') || 0;
       // Completed scopes keep listening, but unchanged idle scopes never call a model.
-      if (!changed && !data.hasWork) { this.state.nextRoundAt = null; this.save(); return; }
-      const cadence = changed ? this.intervals.changed : data.active ? this.intervals.active : this.intervals.idle;
+      if (!changed && !data.pendingReview) { this.state.nextRoundAt = null; this.save(); return; }
+      const cadence = this.intervals.changed;
       const due = Math.max(last ? last + cadence : 0, retry);
       this.state.nextRoundAt = new Date(Math.max(this.now(), due)).toISOString();
       if (this.busy() || this.now() < due) { this.save(); return; }
@@ -53,7 +57,7 @@ export class ConductorLoop {
       if (result?.status === 'error') throw new Error(result.answer || 'Conductor round failed.');
       this.state.lastSignature = result?.observedSignature || data.signature;
       this.state.failures = 0; this.state.lastError = null; this.state.retryAt = null;
-      this.state.nextRoundAt = data.hasWork ? new Date(this.now() + (data.active ? this.intervals.active : this.intervals.idle)).toISOString() : null;
+      this.state.nextRoundAt = null; // Listen for a new observation; unchanged work needs no paid pulse.
       this.save();
     } catch (error) {
       if (generation !== this.generation || !this.enabled || this.state.state !== 'running') return;

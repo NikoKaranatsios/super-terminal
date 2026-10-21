@@ -1,6 +1,16 @@
 # Verification evidence and remaining checks
 
-Current build: package `0.5.2`, adding Markdown readability and concise-response instructions to `0.5.1`. No record implies verification of every personal agent, provider version or SSH environment.
+Current build: package `0.6.0`, adding Docs, project classification, messaging/focus and project context boundaries. No record implies verification of every personal agent, provider version or SSH environment.
+
+## Docs, coordination and project-boundary evidence (`0.6.0`)
+
+- Full `npm test`: **139 tests passed**. The final frontend assertion pass separately passed all 11 focused tests. Fixtures cover explicit-team-only peers, same-name project separation, scope filtering, queued/read/withdrawn mail, project moves without process termination, stale assignment identity, automatic focus, Docs navigation and live-terminal transport.
+- [Project access](../test/project-access.test.mjs), [persistent task provenance](../test/task-provenance.test.mjs) and [Conductor progress](../test/conductor-progress.test.mjs) checks cover foreign target aliases, shared sources retained after agent removal, clean project memory, foreign history reads, sibling reports/team missions, tainted prior replies and replay receipts. These are software-boundary checks, not proof that a provider cannot read files through its operating-system account.
+- [Project classification](../test/project-classification.test.mjs) uses synthetic roots, worktrees, symlinks, duplicate names, PID/server reuse and malformed Git metadata. No approved-host SSH or paid model call is needed by the suites.
+- Synthetic Docs/agent split previews were visually inspected at 1150×820 and 820×650. Guide tables, topic navigation, project selector and message composer remain usable; details expansion and focus updates survive polling. Personal transcripts are not fixtures.
+- `npm run build`, `npm run test:desktop`, packaging, strict deep signature verification and whitespace checks passed. Installed runtime/source/assets match all 44 checked files; the health endpoint reports version `0.6.0`, protocol `2`. All three pre-install managed tmux sessions and managed IDs survived. The generated app copy was consumed by the installer; the previous app is recoverable in Trash.
+- The installed app initially stalled during a synchronous filesystem open. A native process sample confirmed `uv_fs_open`/`open`, but did not identify the file. Standalone Node and isolated Electron read-only probes completed normally. The service recovered without a code change: the state endpoint responded in 0.18 seconds with no source warnings and both configured remote scans healthy. **The root cause remains unverified.** Add bounded/isolated filesystem discovery to D1/P2; do not describe recovery as a proven fix.
+- Native Docs visual acceptance remains unverified: after launch the window became unavailable to automation and reselecting it timed out. The installed service and fixture renderer were verified separately. Existing provider-launch, notification-banner, and broad native-workspace acceptance items remain open.
 
 ## Markdown readability evidence (`0.5.2`)
 

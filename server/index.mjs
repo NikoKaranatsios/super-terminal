@@ -18,6 +18,10 @@ import { allowedHosts, connections, defaultPrompt, prepareBridge, startupPrompt,
 import { parseTopics, workProgress, resolveScope, scopeContext, canCommunicate, carryProjects, mergeProjects, wrapSummary, resolveLaunchLocation } from './work-sessions.mjs';
 import { initializeTasks, createTask, updateTask, recordTaskEvent, taskSummary, taskDescendsFrom } from './tasks.mjs';
 import { controlAgent, removeAgent } from './lifecycle.mjs';
+import { classifyProjects, matchingAssignment, setProjectAssignment } from './project-classification.mjs';
+import { projectOf, teamOf, peersAllowed, contextKey, agentScopeContext, messageVisible, contextTarget, allowedProjectIds, canReadProjectContent } from './project-access.mjs';
+import { resolveFocus } from './user-focus.mjs';
+import { validateConductorContent } from './conductor-access.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const port = Number(process.env.PORT || 4317);
@@ -32,6 +36,15 @@ store.state.projects ||= [];
 store.state.lifecycle ||= {};
 store.state.workSessions ||= [];
 initializeTasks(store.state);
+// Pin enrollment identity once; later filesystem discovery must not silently move it.
+const initialProjects = classifyProjects(store.state,{sessions:store.state.sessions,history:[]},{discover:true,allowedHosts});
+for (const row of initialProjects.sessions) {
+  const session = store.state.sessions.find(s => s.id === row.id);
+  if (!session.projectId && row.projectId && session.projectAssignment?.source !== 'manual') {
+    session.contextProjectId = null; session.contextIsolation = 'restart-required'; session.projectId = row.projectId;
+  }
+  if (session.projectId && session.projectAssignment?.source !== 'manual') session.projectAssignment = {source:'assigned',reason:'enrollment-project',verified:true};
+}
 store.state.prompts ||= Object.fromEntries(['codex', 'claude', 'grok'].map(p => [p, defaultPrompt]));
 store.save();
 const remoteCache = new Map();
@@ -44,8 +57,19 @@ const coordinator = new Coordinator(store);
 coordinator.liveReader = liveSessions;
 const invalidate = () => { externalTime = 0; if (process.env.SUPER_TERMINAL_TEST !== '1') for(const host of allowedHosts) refreshRemote(host); };
 const lifecycleContext = { store, allowedHosts, closeBrowser: id => browsers.action(id, { action: 'close' }), invalidate };
-coordinator.configure({ history });
+coordinator.configure({ history, progressReader: async ({ observations }) => Promise.all(observations.filter(o => o.historyId).slice(0,3).map(async o => {
+  try { const transcript = await history.transcript(o.historyId); return { observationId:o.id, summary:transcript.messages.slice(-3).map(m => `${m.role}: ${m.text}`).join('\n').slice(-3000) }; }
+  catch { return { observationId:o.id, unavailable:true, summary:'Conversation is unavailable.' }; }
+})) });
 coordinator.actionHandler = async (action, metadata = {}) => {
+  if (metadata.context?.projectScoped && action.type === 'cleanup' && (!action.target || !metadata.scope?.agentIds?.includes(action.target))) throw new Error('Project cleanup requires an agent in the selected project.');
+  if (action.type === 'resume_conversation') {
+    const original = await history.get(action.target);
+    if (!original) throw new Error('Conversation not found.');
+    metadata = {...metadata,historyProjectId:classifyProjects(store.state,{sessions:[],history:[original]},{discover:false,allowedHosts}).history[0].projectId};
+    if (!metadata.historyProjectId) throw new Error('Classify this conversation into a project before resuming it through Conductor.');
+  }
+  validateConductorContent(store.state,action,metadata);
   if (metadata.autonomous) {
     if (coordinator.status().loop.state !== 'running') throw new Error('Continuous coordination has been paused or stopped.');
     validateAutonomousAction(store.state, action, collectWork(store.state, await liveSessions()).scope);
@@ -58,6 +82,18 @@ coordinator.actionHandler = async (action, metadata = {}) => {
     } });
 };
 const attachments = new Set();
+const activityStatus = {lastCheckedAt:null,lastError:null,running:false};
+function backgroundStatus() {
+  const enabled = process.env.SUPER_TERMINAL_TEST !== '1';
+  return {
+    service:{state:stopping?'stopping':'running',survivesQuit:false},
+    collection:{state:enabled?'running':'disabled',intervalMs:5000,...activityStatus},
+    localDiscovery:{mode:'on-demand',cacheMs:7000,lastCollectedAt:externalTime ? new Date(externalTime).toISOString() : null},
+    remoteDiscovery:{state:enabled && allowedHosts.length?'running':'disabled',intervalMs:20000,historyCacheMs:60000},
+    interface:{intervalMs:5000}, notifications:{intervalMs:3000,enabled:store.state.preferences.notifyOnFinish},
+    terminal:{mode:'event-driven',attachments:attachments.size}, browser:{mode:'on-demand',contexts:browsers.contexts.size}
+  };
+}
 const providers = ['codex', 'claude', 'grok', 'shell'];
 const app = express();
 const server = http.createServer(app);
@@ -74,7 +110,7 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '256kb' }));
 app.get('/desktop-health', (req, res) => res.json({
-  product: 'super-terminal', protocol: 2, version: '0.5.2',
+  product: 'super-terminal', protocol: 2, version: '0.6.0',
   dataKey: createHash('sha256').update(path.resolve(dataDir)).digest('hex')
 }));
 function authorized(value) {
@@ -103,7 +139,7 @@ async function liveSessions() {
   const imported = defaults.map(t => ({
     id: `tmux:${t.pane}`, kind: 'tmux', provider: ['codex', 'claude', 'grok'].includes(t.command) ? t.command : 'shell',
     title: `${t.name} · ${t.pane}`, cwd: t.cwd, host: 'local', group: path.basename(repository(t.cwd) || t.cwd) || 'Loose sessions',
-    target: t.target, pane: t.pane, tty: t.tty, status: t.dead ? 'exited' : 'running'
+    target: t.target, pane: t.pane, tty: t.tty, serverIdentity: t.serverIdentity, processStartIdentity:t.processStartIdentity, pid:t.pid, startedAt:t.startedAt, status: t.dead ? 'exited' : 'running'
   }));
   if (Date.now() - externalTime > 7000) {
     externalCache = await externalTerminals([...own, ...defaults].map(t => t.tty));
@@ -114,16 +150,31 @@ async function liveSessions() {
     ...r.processes
   ]);
   const rows = await history.all();
-  return [...live, ...imported, ...externalCache, ...remote].map(s => { const { files, ...publicRow } = s; return { ...publicRow, ...store.state.assignments?.[s.id], status: s.kind !== 'external' && store.state.lifecycle[s.id] === 'paused' && ['running','external','paused'].includes(s.status) ? 'paused' : s.status, historyId: matchHistory(s, rows), linkedHistory: rows.filter(r => r.host === s.host && r.provider === s.provider && s.files?.includes(r.file)).map(r => r.id), historyMatch: s.resumeId || s.files?.length || s.historyId ? 'file-or-id' : 'start-time' };  });
+  const sessions = [...live, ...imported, ...externalCache, ...remote].map(s => {
+    const { files, ...publicRow } = s;
+    const assignment = s.kind === 'managed' ? null : matchingAssignment(store.state, s).assignment;
+    const metadata = assignment ? Object.fromEntries(['projectId','taskId','teamId','scope','group'].filter(k => assignment[k] !== undefined).map(k => [k,assignment[k]])) : {};
+    return { ...publicRow, ...metadata, status: s.kind !== 'external' && store.state.lifecycle[s.id] === 'paused' && ['running','external','paused'].includes(s.status) ? 'paused' : s.status, historyId:matchHistory(s,rows), linkedHistory:rows.filter(r => r.host === s.host && r.provider === s.provider && files?.includes(r.file)).map(r=>r.id), historyMatch:s.resumeId || files?.length || s.historyId ? 'file-or-id' : 'start-time' };
+  });
+  const classified = classifyProjects(store.state, {sessions,history:rows}, {discover:true,allowedHosts});
+  let provenanceChanged=false; store.state.historyProvenance ||= {};
+  for (const row of classified.sessions.filter(s => s.kind === 'managed' && s.historyId)) {
+    const session=store.state.sessions.find(s=>s.id===row.id);
+    const previous=store.state.historyProvenance[row.historyId] || [];
+    const sources=[...new Set([...previous,...(session.contentProjectIds || []),session.contextProjectId,...allowedProjectIds(store.state,session)].filter(Boolean))].sort();
+    if (JSON.stringify(previous)!==JSON.stringify(sources)) {store.state.historyProvenance[row.historyId]=sources;provenanceChanged=true;}
+  }
+  if (classified.changed || provenanceChanged) store.save();
+  return classified.sessions.map(s => ({...s,capabilities:{mailbox:s.kind === 'managed' && !s.enrollmentRevokedAt && !s.contextIsolation && ['running','paused'].includes(s.status), terminalInput:s.kind !== 'external' && !['stopped','exited'].includes(s.status), continuationHistoryId:s.contextIsolation ? null : s.historyId || null, assignProject:true}}));
 }
 app.get('/api/state', route(async (req, res) => {
   const [sessions, conversations] = await Promise.all([liveSessions(), history.all(req.query.refresh === '1')]);
   res.json({
-    sessions, history: conversations.map(publicHistory), hosts: store.state.hosts, hostNames: Object.fromEntries(connections.map(c => [c.target, c.name])),
+    sessions, history: classifyProjects(store.state,{sessions:[],history:conversations},{discover:false,allowedHosts}).history.map(publicHistory), hosts: store.state.hosts, hostNames: Object.fromEntries(connections.map(c => [c.target, c.name])),
     remote: allowedHosts.map(host => { const r = remoteCache.get(host); return { host, scannedAt: r?.scannedAt, error: r?.error, scanning: scanTasks.has(host), historyCount: r?.history?.length || 0, elevatedRead: r?.elevatedRead || false }; }),
     preferences: store.state.preferences, activity: store.state.activity,
     home, defaultCwd: path.join(home, 'Projects'), prompts: store.state.prompts,
-    coordinator: coordinator.status(), messages: store.state.messages.slice(-100),
+    coordinator: coordinator.status(), messages: store.state.messages.slice(-100), background:backgroundStatus(),
     teams: store.state.teams, projects: store.state.projects, tasks: store.state.tasks,
     workSessions: store.state.workSessions.map(s => ({ ...s, progress: workProgress(s) })),
     browsers: [...browsers.contexts.keys()],
@@ -131,7 +182,7 @@ app.get('/api/state', route(async (req, res) => {
     tmuxAvailable: !!tmux, warnings: history.warnings
   });
 }));
-app.get('/api/messages', (req, res) => res.json(store.state.messages.filter(m => !req.query.group || m.group === req.query.group)));
+app.get('/api/messages', (req, res) => res.json(store.state.messages.filter(m => (!req.query.group || m.group === req.query.group) && (!req.query.agentId || m.to === req.query.agentId || m.from === req.query.agentId)).slice(-200)));
 app.get('/api/activity', (req, res) => res.json({ events: store.state.activity, enabled: store.state.preferences.notifyOnFinish }));
 app.get('/api/history/:id', route(async (req, res) => res.json(await history.transcript(req.params.id, req.query.cursor))));
 app.get('/api/tasks', (req, res) => res.json(taskSummary(store.state, { projectId: req.query.projectId, workSessionId: req.query.workSessionId })));
@@ -154,8 +205,14 @@ async function createSessionUnlocked(body) {
   if (body.historyId && !original) throw new Error('Conversation not found.');
   if (original) {
     provider = original.provider;
+    const originProject = classifyProjects(store.state,{sessions:[],history:[original]},{discover:true,allowedHosts}).history[0].projectId;
+    const requested = body.projectId || store.state.tasks.find(t=>t.id===body.taskId)?.projectId;
+    if (requested && requested !== originProject) throw new Error('A conversation cannot move into another project. Start a fresh agent.');
     const previous = store.state.sessions.find(s => s.historyId === original.id);
-    if (previous && (await tmuxSessions()).some(t => t.name === previous.tmuxName)) return publicSession(previous);
+    if (previous && (await tmuxSessions()).some(t => t.name === previous.tmuxName)) {
+      if (body.task?.trim()) await promptAgent(previous.id, body.task, 'you');
+      return publicSession(previous);
+    }
   }
   const location = resolveLaunchLocation(store.state, { ...body, ...(original ? { host: original.host, cwd: original.cwd } : {}) }, allowedHosts);
   const { host, cwd } = location;
@@ -163,7 +220,7 @@ async function createSessionUnlocked(body) {
   if (original && body.host && body.host !== original.host) throw new Error('Resume a conversation in its original environment.');
   const repo = host === 'local' ? repository(cwd) : null;
   const project = store.state.projects.find(p => p.id === location.projectId);
-  const team = store.state.teams.find(t => t.id === location.teamId || t.name === body.group);
+  const team = store.state.teams.find(t => t.id === location.teamId);
   const group = text(team?.name || body.group || original?.group || path.basename(repo || cwd) || 'Loose sessions', 120);
   const assigned = store.state.tasks.find(t => t.id === (location.taskId || (!body.role && location.scope?.goalId)));
   if (assigned) {
@@ -176,10 +233,22 @@ async function createSessionUnlocked(body) {
   const tmuxName = `st-${id.slice(0, 12)}`;
   const session = { id, remoteUser: host !== 'local' ? original?.owner || null : null, projectId: location.projectId, teamId: team?.id || null, taskId: assigned?.id || null, assignmentRevision: 0, attemptId: randomUUID(), kind: 'managed', provider, host, cwd, group, title, role: text(body.role || '', 100), tmuxName, historyId: original?.id || null, createdAt: new Date().toISOString(), status: 'running', agentToken: randomBytes(32).toString('hex') };
   session.scope = location.scope;
+  const classification = classifyProjects(store.state,{sessions:[session],history:[]},{discover:true,allowedHosts});
+  session.projectId = classification.sessions[0].projectId || session.projectId;
+  session.projectAssignment = session.projectId ? {source:'assigned',reason:'enrollment-project',verified:true} : classification.sessions[0].projectAssignment;
+  session.contextProjectId = session.projectId || null;
+  session.contentProjectIds = [...allowedProjectIds(store.state,session)];
+  if (original) session.contentProjectIds = [...new Set([...session.contentProjectIds,...(store.state.historyProvenance?.[original.id] || [])])];
+  if (session.contentProjectIds.some(id=>!allowedProjectIds(store.state,session).has(id))) throw new Error('This saved conversation contains shared-team context. Continue with its explicit team or start a fresh agent.');
+  if (assigned && !canReadProjectContent(store.state,session,assigned)) throw new Error('This task contains context shared by a team. Join that team explicitly or start with an unshared task.');
+  if (original) {
+    const prior = classifyProjects(store.state,{sessions:[],history:[original]},{discover:false,allowedHosts}).history[0];
+    if (prior.projectId !== session.projectId) throw new Error('A conversation cannot move into another project. Start a fresh agent in that project.');
+  }
   session.mission = typeof body.task === 'string' ? body.task.slice(0, 12000) : team?.mission || assigned?.notes || '';
   const bridge = await prepareBridge(session, root, port);
   let task = typeof body.task === 'string' && body.task.trim() ? body.task.slice(0, 12000) : team?.mission || '';
-  if (session.scope) task += `\n\nAssignment scope:\n${JSON.stringify(scopeContext(store.state.workSessions, session.scope), null, 2)}\nWork at your assigned layer: session-level agents coordinate the whole session, project-level agents own project outcomes, and goal-level agents focus on that goal. Coordinate with peers before overlapping edits. Report completed work and blockers through the mailbox; never mark success without verification.`;
+  if (session.scope) task += `\n\nAssignment scope:\n${JSON.stringify(agentScopeContext(store.state, session), null, 2)}\nWork only in your assigned project. Report completed work and blockers through the mailbox; never mark success without verification.`;
   const role = typeof body.prompt === 'string' ? body.prompt.slice(0, 12000) : store.state.prompts[provider] || defaultPrompt;
   const prompt = startupPrompt(session, bridge, role, task);
   let command;
@@ -198,7 +267,7 @@ async function createSessionUnlocked(body) {
     command = ['ssh', '-tt', '-o', 'ConnectTimeout=10', ...bridge.sshArgs, host, remoteScript].map(quote).join(' ');
     if (!store.state.hosts.includes(host)) store.state.hosts.push(host);
   }
-  const contextFile = ensureContext(group);
+  const contextFile = ensureContext(contextKey(store.state,session));
   const launch = `${command}; printf '\\n[Session finished. You are now in a shell.]\\n'; exec ${quote(shell)} -l`;
   await tmuxRun(['new-session', '-d', '-s', tmuxName, '-c', host === 'local' ? cwd : home, '-x', '140', '-y', '40',
     '-e', `SUPER_TERMINAL_CONTEXT=${contextFile}`, '-e', `SUPER_TERMINAL_GROUP=${group}`, '-e', `SUPER_TERMINAL_AGENT_CONFIG=${bridge.configPath}`,
@@ -212,7 +281,9 @@ async function createSessionUnlocked(body) {
     let taskProject = project || store.state.projects.find(p => p.host === host && p.cwd === (repo || cwd));
     if (!taskProject) { taskProject = { id: randomUUID(), name: path.basename(repo || cwd) || group, host, cwd: repo || cwd, status: 'active', notes: '', createdAt: session.createdAt }; store.state.projects.push(taskProject); }
     session.projectId = taskProject.id;
+    session.contextProjectId = taskProject.id; session.projectAssignment = {source:'assigned',reason:'enrollment-project',verified:true};
     const task = createTask(store.state, { projectId: session.projectId, title, notes: session.mission.slice(0, 6000), agentId: session.id, scope: session.scope, parentTaskId: session.scope?.goalId || undefined, status: 'todo' });
+    task.contentProjectIds = [...new Set([session.projectId,...session.contentProjectIds])];
     session.taskId = task.id;
   }
   store.save();
@@ -224,11 +295,11 @@ function updateManagedAgent(id, body, actor = 'you') {
   if (!session) throw new Error('Session not found.');
   const next = { ...session };
   for (const [field, length] of [['title',200],['role',100],['group',120]]) if (body[field] !== undefined) next[field] = text(body[field], length);
-  const team = body.teamId ? store.state.teams.find(t => t.id === body.teamId) : body.group !== undefined ? store.state.teams.find(t => t.name === next.group) : null;
+  const team = body.teamId ? store.state.teams.find(t => t.id === body.teamId) : null;
   if (body.teamId && !team) throw new Error('Team not found.');
   if (body.group !== undefined || body.teamId !== undefined) {
     next.teamId = team?.id || null;
-    if (team) { next.group = team.name; next.projectId = team.projectId || next.projectId; if (team.scope) next.scope = resolveScope(store.state.workSessions, team.scope); }
+    if (team) next.group = team.name;
   }
   if (body.scope !== undefined) {
     next.scope = resolveScope(store.state.workSessions, body.scope);
@@ -239,8 +310,17 @@ function updateManagedAgent(id, body, actor = 'you') {
   if (body.projectId !== undefined) {
     if (body.projectId && !store.state.projects.some(p => p.id === body.projectId)) throw new Error('Project not found.');
     next.projectId = body.projectId || null;
+    if (next.projectId && store.state.projects.find(p => p.id === next.projectId)?.host !== session.host) throw new Error('A project assignment must stay in the agent’s environment.');
   }
-  if (body.taskId !== undefined) next.taskId = body.taskId || null;
+  const moved = (next.projectId || null) !== (session.projectId || null);
+  if (moved) {
+    next.taskId = null; next.scope = null; next.teamId = null; next.mission = '';
+    next.contextProjectId = session.contextProjectId ?? session.projectId ?? null;
+    next.contextIsolation = 'restart-required';
+    next.group = store.state.projects.find(p => p.id === next.projectId)?.name || 'Unassigned';
+  }
+  if (session.teamId && session.teamId !== next.teamId) next.contextIsolation = 'restart-required';
+  if (body.taskId !== undefined && !moved) next.taskId = body.taskId || null;
   const task = next.taskId ? store.state.tasks.find(t => t.id === next.taskId) : null;
   if (next.taskId && (!task || task.projectId !== next.projectId)) throw new Error('Task does not belong to the assigned project.');
   if (task?.scope && JSON.stringify(task.scope) !== JSON.stringify(next.scope)) throw new Error('Task conflicts with the assignment scope.');
@@ -249,18 +329,39 @@ function updateManagedAgent(id, body, actor = 'you') {
   if (reassigned) next.assignmentRevision = (session.assignmentRevision || 0) + 1;
   const previousTask = store.state.tasks.find(t => t.id === session.taskId && t.agentId === id);
   Object.assign(session, next);
+  if (team && !session.contextIsolation) team.sharedProjectIds = [...new Set([...(team.sharedProjectIds || []),team.projectId,projectOf(store.state,session),...(session.contentProjectIds || [])].filter(Boolean))];
   if (reassigned) {
     if (previousTask && previousTask.id !== next.taskId) updateTask(store.state, previousTask.id, { agentId: null });
     if (task && task.agentId !== id) updateTask(store.state, task.id, { agentId:id });
-    ensureContext(session.group);
-    sendMessage(actor, id, `Your assignment changed. Read platform context and tasks at your next checkpoint. Preserve current work and normal permissions. Assignment revision: ${session.assignmentRevision}.${team?.mission ? '\nTeam mission: ' + team.mission : ''}`, session.group);
+    for (const message of store.state.messages) if (message.to === id && !message.read) message.delivery = 'withdrawn';
+    ensureContext(contextKey(store.state,session));
+    if (!session.contextIsolation) sendMessage(actor, id, `Your assignment changed. Read platform context and tasks at your next checkpoint. Preserve current work and normal permissions. Assignment revision: ${session.assignmentRevision}.`, session.group);
   }
   store.save(); return publicSession(session);
 }
 app.patch('/api/sessions/:id', route(async (req, res) => res.json(updateManagedAgent(req.params.id, req.body))));
+app.patch('/api/sessions/:id/project', route(async (req,res) => {
+  const row = (await liveSessions()).find(s => s.id === req.params.id);
+  if (!row) throw new Error('Agent not found.');
+  if (req.body.projectId !== null && typeof req.body.projectId !== 'string') throw new Error('Choose a project or Unassigned.');
+  const project = req.body.projectId ? store.state.projects.find(p => p.id === req.body.projectId) : null;
+  if (req.body.projectId && (!project || project.host !== row.host)) throw new Error('Choose a project in this environment.');
+  if (row.kind === 'managed') updateManagedAgent(row.id,{projectId:req.body.projectId});
+  const record = setProjectAssignment(store.state,row,req.body.projectId,{actor:'you'});
+  for (const key of ['taskId','teamId','scope']) record[key] = null;
+  store.save();
+  const session = (await liveSessions()).find(s => s.id === row.id);
+  res.json({session,note:session?.contextIsolation ? 'Project tracking changed. The existing conversation retains its prior context; start a fresh agent to work in this project. Its terminal remains available.' : 'Project tracking updated. The process and working directory are unchanged.'});
+}));
+app.post('/api/focus', route(async(req,res) => {
+  const focus = resolveFocus(store.state,req.body,await liveSessions());
+  coordinator.setFocus(focus); res.json({focus:coordinator.status().focus});
+}));
 async function promptAgent(id, message, from = 'conductor') {
   const agent = store.state.sessions.find(s => s.id === id);
-  if (!agent || agent.enrollmentRevokedAt || agent.status === 'stopped') throw new Error('Choose an enrolled agent.');
+  if (!agent || agent.enrollmentRevokedAt || agent.status === 'stopped' || agent.contextIsolation) throw new Error('An active managed agent in its original project is required. Start a fresh agent after a project move.');
+  const live = (await liveSessions()).find(s => s.id === id);
+  if (!live?.capabilities.mailbox) throw new Error('This agent has no active mailbox. Reconnect or start a fresh managed agent.');
   const row = sendMessage(from, id, message, agent.group);
   return { ...row, delivery: 'queued', note: 'Queued in the agent mailbox for its next checkpoint; this does not submit text into a CLI approval prompt.' };
 }
@@ -364,7 +465,9 @@ app.post('/api/teams', route(async (req, res) => {
   const scope = resolveScope(store.state.workSessions, req.body.scope);
   const scopedProject = store.state.workSessions.find(s => s.id === scope?.workSessionId)?.projects.find(p => p.id === scope?.projectId);
   const team = { id: randomUUID(), name, mission: req.body.mission, cwd, host, projectId: req.body.projectId || scopedProject?.canonicalProjectId || null, scope, createdAt: new Date().toISOString() };
-  store.state.teams.push(team); ensureContext(name); store.save();
+  team.sharedProjectIds = [team.projectId].filter(Boolean); team.contentProjectIds = [team.projectId].filter(Boolean);
+  if (team.projectId && !store.state.projects.some(p => p.id === team.projectId)) throw new Error('Project not found.');
+  store.state.teams.push(team); ensureContext(`team:${team.id}`); store.save();
   res.json(team);
 }));
 app.patch('/api/teams/:id', route(async (req, res) => {
@@ -376,7 +479,7 @@ app.patch('/api/teams/:id', route(async (req, res) => {
 app.post('/api/teams/:id/brief', route(async (req, res) => {
   const team = store.state.teams.find(t => t.id === req.params.id);
   if (!team?.mission.trim()) throw new Error('Add a mission first.');
-  const members = store.state.sessions.filter(s => s.teamId === team.id || (!s.teamId && s.group === team.name && s.host === team.host && s.cwd === team.cwd));
+  const members = store.state.sessions.filter(s => s.teamId === team.id && !s.contextIsolation && !s.enrollmentRevokedAt);
   for (const member of members) sendMessage('you', member.id, `Team "${team.name}" briefing:\n${team.mission}\nYour role: ${member.role || 'Collaborator'}. Coordinate with peers through the mailbox. Confirm ownership before editing overlapping files, report blockers, and preserve normal approval requirements.`, team.name);
   res.json({ count: members.length });
 }));
@@ -392,7 +495,13 @@ app.post('/api/teams/:id/start', route(async (req, res) => {
 function sendMessage(from, to, message, group) {
   if (typeof message !== 'string' || !message.trim() || message.length > 12000) throw new Error('Messages must contain 1–12,000 characters.');
   if (to !== 'coordinator' && !store.state.sessions.some(s => s.id === to)) throw new Error('Recipient not found.');
-  const row = { id: randomUUID(), from, to, text: message, group, createdAt: new Date().toISOString(), read: false };
+  const recipient = store.state.sessions.find(s => s.id === to);
+  const sender = store.state.sessions.find(s => s.id === from);
+  if (recipient?.contextIsolation) throw new Error('Project moved: start a fresh agent before delivering new project context.');
+  if (sender && recipient && !peersAllowed(store.state,sender,recipient)) throw new Error('Explicit shared-team membership is required.');
+  const sourceProjectIds = sender ? [...new Set([...allowedProjectIds(store.state,sender),...(sender.contentProjectIds || [])])] : recipient ? [...allowedProjectIds(store.state,recipient)] : [];
+  if (recipient && sourceProjectIds.some(id => !allowedProjectIds(store.state,recipient).has(id))) throw new Error('Message source context is outside the recipient’s project or explicit team.');
+  const row = { id: randomUUID(), from, to, text: message, group, sourceProjectIds, projectId:projectOf(store.state,recipient || sender), teamId:teamOf(store.state,recipient || sender)?.id || null, assignmentRevision:recipient?.assignmentRevision || 0, createdAt: new Date().toISOString(), read: false, delivery:'queued' };
   store.state.messages.push(row);
   store.state.messages = store.state.messages.slice(-2000);
   store.save(); return row;
@@ -405,24 +514,27 @@ app.post('/api/agent', route(async (req, res) => {
   const agent = req.agent;
   if (!agent) return res.status(403).json({ error: 'Agent credential required.' });
   const b = req.body;
-  if (b.command === 'peers') return res.json({ self: agent.id, peers: store.state.sessions.filter(s => s.id !== agent.id && canCommunicate(agent, s)).map(({ id, title, provider, host, group, scope, role }) => ({ id, title, provider, host, group, scope, role })), coordinator: 'coordinator' });
+  if (agent.contextIsolation) throw new Error('This agent moved projects. Its prior conversation is retained, so platform context is suspended. Start a fresh agent in the new project.');
+  if (b.command === 'peers') return res.json({ self: agent.id, peers: store.state.sessions.filter(s => s.id !== agent.id && peersAllowed(store.state,agent,s)).map(({ id, title, provider, host, teamId, role }) => ({ id, title, provider, host, teamId, role })), coordinator: 'coordinator' });
   if (b.command === 'inbox') {
-    const messages = store.state.messages.filter(m => m.to === agent.id && !m.read).slice(-50);
-    for (const m of messages) m.read = true;
+    const messages = store.state.messages.filter(m => !m.read && m.delivery !== 'withdrawn' && messageVisible(store.state,m,agent)).slice(-50);
+    for (const m of messages) { m.read = true; m.readAt = new Date().toISOString(); m.delivery = 'read'; agent.contentProjectIds = [...new Set([...(agent.contentProjectIds || []),...(m.sourceProjectIds || [])])]; }
     store.save(); return res.json({ messages });
   }
   if (b.command === 'send') {
     const target = store.state.sessions.find(s => s.id === b.to);
-    if (b.to !== 'coordinator' && (!target || !canCommunicate(agent, target))) throw new Error('Peers must share your group or working session. Ask the user to assign the sessions for cross-project handoffs.');
+    if (b.to !== 'coordinator' && (!target || !peersAllowed(store.state,agent,target))) throw new Error('Explicit shared-team membership is required. A project label or working session does not grant peer access.');
     return res.json(sendMessage(agent.id, b.to, b.message, agent.group));
   }
-  if (b.command === 'context') return res.json({ group: agent.group, id: agent.id, agentId: agent.id, agent: { id: agent.id, attemptId: agent.attemptId || agent.id, assignmentRevision: agent.assignmentRevision || 0 }, attemptId: agent.attemptId || agent.id, assignmentRevision: agent.assignmentRevision || 0, projectId: agent.projectId, taskId: agent.taskId, scope: scopeContext(store.state.workSessions, agent.scope), mission: agent.mission || store.state.teams.find(t => t.name === agent.group)?.mission || '', content: fs.readFileSync(ensureContext(agent.group), 'utf8') });
+  if (b.command === 'context') return res.json({ id: agent.id, agentId: agent.id, agent: { id: agent.id, attemptId: agent.attemptId || agent.id, assignmentRevision: agent.assignmentRevision || 0 }, attemptId: agent.attemptId || agent.id, assignmentRevision: agent.assignmentRevision || 0, projectId:projectOf(store.state,agent), teamId:teamOf(store.state,agent)?.id || null, taskId:agent.taskId, scope:agentScopeContext(store.state,agent), mission:agent.mission || '', teamMission:teamOf(store.state,agent)?.mission || '', content:fs.readFileSync(ensureContext(contextKey(store.state,agent)),'utf8') });
   if (b.command === 'tasks') return res.json({ tasks: store.state.tasks.filter(t => {
+    if (!projectOf(store.state,agent) || t.projectId !== projectOf(store.state,agent)) return false;
+    if (!canReadProjectContent(store.state,agent,t)) return false;
     if (agent.scope?.workSessionId && t.scope?.workSessionId !== agent.scope.workSessionId) return false;
     if (agent.scope?.projectId && t.scope?.projectId !== agent.scope.projectId) return false;
     if (agent.scope?.goalId && !taskDescendsFrom(store.state, t, agent.scope.goalId)) return false;
     if (agent.taskId && !taskDescendsFrom(store.state, t, agent.taskId)) return false;
-    return agent.scope?.workSessionId || (agent.projectId ? t.projectId === agent.projectId : t.agentId === agent.id);
+    return true;
   }).slice(-100).map(({id,title,status,revision,projectId,notes,agentId}) => ({id,title,status,revision,projectId,notes:notes.slice(0,600),agentId})) });
   if (b.command === 'task' || b.command === 'report' || b.command === 'task_event') {
     const result = recordTaskEvent(store.state, agent, b); store.save(); return res.json(result);
@@ -450,6 +562,7 @@ app.post('/api/coordinator', route(async (req, res) => {
   const workSessionId = req.body.workSessionId ? text(req.body.workSessionId, 80) : '';
   if (workSessionId && !store.state.workSessions.some(s => s.id === workSessionId)) throw new Error('Working session not found.');
   const live = await liveSessions();
+  if (req.body.focus) coordinator.setFocus(resolveFocus(store.state,req.body.focus,live));
   let scope;
   if (req.body.taskId || req.body.projectId) {
     const task = req.body.taskId ? store.state.tasks.find(t => t.id === req.body.taskId) : null;
@@ -459,7 +572,7 @@ app.post('/api/coordinator', route(async (req, res) => {
     if (task && task.projectId !== projectId) throw new Error('Task is not in the selected project.');
     if (workSessionId && task?.scope?.workSessionId && task.scope.workSessionId !== workSessionId) throw new Error('Task is not in the selected working session.');
     const tasks = store.state.tasks.filter(t => t.projectId === projectId && (!task || t.id === task.id || t.parentTaskId === task.id) && (!workSessionId || t.scope?.workSessionId === workSessionId));
-    scope = { layer:task ? 'task' : 'project', projectIds:[projectId], taskIds:tasks.map(t=>t.id), workSessionIds:workSessionId ? [workSessionId] : [], agentIds:live.filter(s=>tasks.some(t=>t.id===s.taskId || t.agentId===s.id)).map(s=>s.id) };
+    scope = { layer:task ? 'task' : 'project', projectIds:[projectId], taskIds:tasks.map(t=>t.id), workSessionIds:workSessionId ? [workSessionId] : [], agentIds:live.filter(s=>(!task && s.projectId===projectId) || tasks.some(t=>t.id===s.taskId || t.agentId===s.id)).map(s=>s.id) };
   }
   res.json(await coordinator.ask(req.body.prompt, group, live, history, workSessionId, req.body.automatic === true, req.body.environment === 'local' || allowedHosts.includes(req.body.environment) ? req.body.environment : 'local', scope ? {scope} : {}));
 }));
@@ -493,14 +606,14 @@ app.put('/api/preferences', route(async (req, res) => {
   store.save(); res.json(store.state.preferences);
 }));
 app.get('/api/context', route(async (req, res) => {
-  const group = text(req.query.group, 120);
-  const file = ensureContext(group);
+  const group = text(req.query.group || '', 120);
+  const file = ensureContext(contextTarget(store.state,req.query));
   res.json({ group, path: file, content: fs.readFileSync(file, 'utf8') });
 }));
 app.put('/api/context', route(async (req, res) => {
-  const group = text(req.body.group, 120);
+  const group = text(req.body.group || '', 120);
   if (typeof req.body.content !== 'string' || req.body.content.length > 100000) throw new Error('Notes are limited to 100,000 characters.');
-  const file = ensureContext(group);
+  const file = ensureContext(contextTarget(store.state,req.body));
   fs.writeFileSync(file + '.tmp', req.body.content, { mode: 0o600 });
   fs.renameSync(file + '.tmp', file);
   res.json({ ok: true, path: file });
@@ -591,6 +704,7 @@ server.listen(port, '127.0.0.1', () => {
     let checking = false;
     const checkActivity = async () => {
       if (checking || stopping) return; checking = true;
+      activityStatus.running = true;
       try {
         const [rows, sessions] = await Promise.all([history.all(), liveSessions()]);
         activity.histories('local', rows.filter(r => r.host === 'local'));
@@ -600,7 +714,9 @@ server.listen(port, '127.0.0.1', () => {
           if (remote?.scannedAt && !remote.error) activity.histories(host, remote.history || []);
           activity.processes(host, sessions, !!remote?.scannedAt && !remote.error);
         }
-      } finally { checking = false; }
+        activityStatus.lastCheckedAt = new Date().toISOString(); activityStatus.lastError = null;
+      } catch(error) { activityStatus.lastError = error.message.slice(0,300); throw error; }
+      finally { checking = false; activityStatus.running = false; }
     };
     checkActivity().catch(() => {});
     const activityTimer = setInterval(() => checkActivity().catch(() => {}), 5000); activityTimer.unref();

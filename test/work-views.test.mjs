@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { projectWork, agentTitle, canControl, mergeOutput, overviewMarkup, taskMarkup, teamsMarkup, statusLabel } from '../src/work-views.mjs';
+import { projectWork, agentTitle, agentContext, canControl, mergeOutput, overviewMarkup, taskMarkup, teamsMarkup, statusLabel } from '../src/work-views.mjs';
 
 const fixture = () => ({
   projects:[{id:'project',name:'Example project',host:'local',cwd:'/example'}],
@@ -49,4 +49,12 @@ test('team discussions send canonical project identity while retaining working-s
   assert.ok(markup.includes('&quot;workSessionId&quot;:&quot;work&quot;'));
   assert.ok(!markup.includes('&quot;projectId&quot;:&quot;legacy-project&quot;'));
   assert.ok(!markup.includes('&quot;goalId&quot;'));
+});
+test('team names and group labels do not imply explicit team membership',()=>{
+  const state=fixture();state.teams=[{id:'team',name:'Example team'}];
+  const labelOnly={id:'label',title:'Same label only',group:'Example team',provider:'codex',status:'running'},member={id:'member',title:'Explicit member',teamId:'team',provider:'codex',status:'running'};
+  state.sessions=[labelOnly,member];
+  assert.ok(!agentContext(labelOnly,state).includes('Example team'));
+  assert.ok(agentContext(member,state).includes('Example team'));
+  const markup=teamsMarkup(state);assert.ok(markup.includes('Explicit member'));assert.ok(!markup.includes('Same label only'));
 });

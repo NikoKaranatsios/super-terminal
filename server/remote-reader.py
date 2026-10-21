@@ -1,6 +1,62 @@
 """Read-only Linux agent discovery and bounded provider history reader over SSH."""
-import os, sys, json, sqlite3, glob, re, subprocess, datetime, time, pwd
+import os, sys, json, sqlite3, glob, re, subprocess, datetime, time, pwd, stat
 from pathlib import Path
+
+def process_start_identity(pid, proc_root='/proc'):
+    """Boot identity and kernel start ticks are stable across scans and PID reuse."""
+    try:
+        pid = int(pid)
+        if pid <= 1: return None
+        root = Path(proc_root)
+        boot = (root/'sys/kernel/random/boot_id').read_text().strip()
+        fields = (root/str(pid)/'stat').read_text().rsplit(')', 1)[1].split()
+        ticks = fields[19]
+        if not re.fullmatch(r'[0-9a-fA-F-]{36}', boot) or not ticks.isdigit(): return None
+        return boot + ':' + ticks
+    except (OSError, ValueError, IndexError): return None
+
+def small_git_file(file, limit=4096):
+    fd = None
+    try:
+        fd = os.open(file, os.O_RDONLY | os.O_NONBLOCK)
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit: return None
+        data = os.read(fd, limit+1)
+        return data.decode().strip() if len(data) <= limit else None
+    except (OSError, UnicodeError): return None
+    finally:
+        if fd is not None: os.close(fd)
+
+def repository_root(cwd):
+    """Verify Git metadata without executing repository commands or configuration."""
+    try:
+        if not isinstance(cwd, str) or not os.path.isabs(cwd): return None
+        current = Path(cwd).resolve(strict=True)
+        if not current.is_dir(): return None
+        for _ in range(64):
+            git = current/'.git'
+            if not git.is_dir():
+                link = small_git_file(git)
+                git = (current/link[8:].strip()).resolve() if link and link.startswith('gitdir: ') and not re.search(r'[\r\n\0]', link) else None
+            if git:
+                head = small_git_file(git/'HEAD', 512)
+                if head and re.fullmatch(r'(ref: refs/[^\s\0]+|[0-9a-fA-F]{40}|[0-9a-fA-F]{64})', head):
+                    common = small_git_file(git/'commondir')
+                    if (git/'objects').is_dir() or (common and not re.search(r'[\r\n\0]', common) and (git/common/'objects').is_dir()): return str(current)
+            if current.parent == current: break
+            current = current.parent
+    except (OSError, ValueError): pass
+    return None
+
+repository_cache = {}
+def repository_metadata(cwd):
+    if not isinstance(cwd, str): return dict(repository=None, repositoryVerified=False)
+    if cwd not in repository_cache:
+        root = repository_root(cwd)
+        try: canonical = str(Path(cwd).resolve(strict=True)) if os.path.isabs(cwd) else None
+        except (OSError, ValueError): canonical = None
+        repository_cache[cwd] = dict(repository=root, repositoryVerified=bool(root), canonicalCwd=canonical)
+    return repository_cache[cwd]
 
 def records(file, limit=131072):
     try:
@@ -134,7 +190,8 @@ def index(base=None):
     base = base or str(Path.home())
     rows = []
     def add(provider, sid, cwd, title, updated, file, created=None):
-        rows.append(dict(provider=provider, sessionId=sid, cwd=cwd or str(Path.home()), title=re.sub(r'\s+', ' ', str(title or provider+' conversation'))[:180], updatedAt=updated, file=file, createdAt=created))
+        folder = cwd or str(Path.home())
+        rows.append(dict(provider=provider, sessionId=sid, cwd=folder, title=re.sub(r'\s+', ' ', str(title or provider+' conversation'))[:180], updatedAt=updated, file=file, createdAt=created, **repository_metadata(folder)))
     codex = str(Path(base)/'.codex')
     dbs = sorted(glob.glob(codex+'/state_*.sqlite'), key=lambda p: int(re.search(r'state_(\d+)', p)[1]), reverse=True)
     try:
@@ -168,10 +225,12 @@ def discover():
     panes=[]
     owner=pwd.getpwuid(os.getuid()).pw_name
     try:
-        data=subprocess.check_output(['tmux','list-panes','-a','-F','#{session_id}\t#{session_name}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_id}\t#{pane_tty}\t#{pane_dead}'],stderr=subprocess.DEVNULL,text=True,timeout=3)
+        data=subprocess.check_output(['tmux','list-panes','-a','-F','#{session_id}\t#{session_name}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_id}\t#{pane_tty}\t#{pane_dead}\t#{pid}'],stderr=subprocess.DEVNULL,text=True,timeout=3)
         for line in data.splitlines():
-            target,name,cwd,command,pane,tty,dead=line.split('\t')
-            panes.append(dict(target=target,title=name,cwd=cwd,command=command,pane=pane,tty=tty,dead=dead=='1',owner=owner,requiresSudo=bool(os.environ.get('SUDO_USER'))))
+            values=line.split('\t')
+            if len(values)!=8: continue
+            target,name,cwd,command,pane,tty,dead,server_pid=values
+            panes.append(dict(target=target,title=name,cwd=cwd,command=command,pane=pane,tty=tty,dead=dead=='1',owner=owner,requiresSudo=bool(os.environ.get('SUDO_USER')),serverIdentity=process_start_identity(server_pid), **repository_metadata(cwd)))
     except (OSError,subprocess.SubprocessError,ValueError): pass
     processes=[]
     data=subprocess.check_output(['ps','-axo','pid=,ppid=,tty=,stat=,etimes=,comm='],text=True,timeout=3)
@@ -180,6 +239,7 @@ def discover():
         if len(values)!=6: continue
         pid,ppid,tty,state,elapsed,command=values; provider=os.path.basename(command)
         if provider not in ('codex','claude','grok') or state.startswith('Z'): continue
+        start_identity = process_start_identity(pid)
         try:
             args=Path('/proc/'+pid+'/cmdline').read_bytes().decode(errors='replace').split('\0')
             if 'mcp-server' in args[1:]: continue
@@ -194,16 +254,19 @@ def discover():
         resume=next((a for a in args[1:] if re.fullmatch(r'[0-9a-fA-F-]{36}',a)),None)
         try: processOwner=pwd.getpwuid(os.stat('/proc/'+pid).st_uid).pw_name
         except (OSError,KeyError): processOwner=''
-        processes.append(dict(owner=processOwner,requiresSudo=bool(os.environ.get('SUDO_USER')),pid=int(pid),ppid=int(ppid),tty=tty,provider=provider,cwd=cwd,files=files,resumeId=resume,runtime='app-server' in args[1:],startedAt=iso(time.time()-int(elapsed)),status='paused' if state.startswith('T') else 'external'))
+        if start_identity and start_identity != process_start_identity(pid): continue
+        processes.append(dict(owner=processOwner,requiresSudo=bool(os.environ.get('SUDO_USER')),pid=int(pid),ppid=int(ppid),tty=tty,provider=provider,cwd=cwd,files=files,resumeId=resume,runtime='app-server' in args[1:],startedAt=iso(time.time()-int(elapsed)),processStartIdentity=start_identity,status='paused' if state.startswith('T') else 'external', **repository_metadata(cwd)))
     # Include the SSH caller's tmux server and servers owned by discovered agent users.
     if os.getuid()==0:
         owners=set(p.get('owner') for p in processes) | {os.environ.get('SUDO_USER')}
         for user in owners-{owner,None,''}:
             try:
-                data=subprocess.check_output(['sudo','-n','-u',user,'tmux','list-panes','-a','-F','#{session_id}\t#{session_name}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_id}\t#{pane_tty}\t#{pane_dead}'],stderr=subprocess.DEVNULL,text=True,timeout=3)
+                data=subprocess.check_output(['sudo','-n','-u',user,'tmux','list-panes','-a','-F','#{session_id}\t#{session_name}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_id}\t#{pane_tty}\t#{pane_dead}\t#{pid}'],stderr=subprocess.DEVNULL,text=True,timeout=3)
                 for line in data.splitlines():
-                    target,name,cwd,command,pane,tty,dead=line.split('\t')
-                    panes.append(dict(target=target,title=name,cwd=cwd,command=command,pane=pane,tty=tty,dead=dead=='1',owner=user,requiresSudo=True))
+                    values=line.split('\t')
+                    if len(values)!=8: continue
+                    target,name,cwd,command,pane,tty,dead,server_pid=values
+                    panes.append(dict(target=target,title=name,cwd=cwd,command=command,pane=pane,tty=tty,dead=dead=='1',owner=user,requiresSudo=True,serverIdentity=process_start_identity(server_pid), **repository_metadata(cwd)))
             except (OSError,subprocess.SubprocessError,ValueError): pass
     return dict(panes=panes,processes=processes)
 

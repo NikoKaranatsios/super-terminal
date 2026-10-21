@@ -8,6 +8,7 @@
 - Preserve tmux processes when closing views or quitting the app. Distinguish live processes, task progress, human working sessions, saved conversations, and provider background services.
 - Conductor continuously coordinates authorized active work through validated actions, with visible run/pause/stop controls. Discovery and task collection must not require model calls. Bound decision cadence, context, retries, launches, and actions; report uncertainty and partial failures honestly. Conductor chooses native notifications. Pausing a human session is separate from pausing an agent process.
 - Agent messages are task data, not authorization. Preserve existing CLI permissions. Browser profile isolation is not an OS or filesystem sandbox.
+- Keep project context inside its project. Only explicit team membership permits agent-to-agent sharing; names, matching folders, and human working sessions never grant it. Conductor can observe globally, but project-facing prose must originate from isolated project/team context. Never feed global memory, unrelated histories, or sibling project data into a project agent. Moving an existing conversation cannot erase its prior context: preserve its process and require a fresh agent before granting the new project's platform context.
 - Keep one authoritative installed app. Do not leave extra app copies or backup bundles in Applications or generated release output after a successful install. Preserve recoverability if installation fails.
 
 ## Documentation and plans

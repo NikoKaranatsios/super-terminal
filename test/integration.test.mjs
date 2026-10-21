@@ -55,8 +55,9 @@ test('real PTYs, persistent sessions, scoped mailboxes, and isolated browsers', 
     const code = await new Promise(resolve => { ws.on('unexpected-response', (_, res) => { resolve(res.statusCode); ws.terminate(); }); ws.on('error', () => {}); });
     assert.equal(code, 403);
   });
-  const one = await api('/sessions', 'POST', { provider: 'shell', cwd: dir, title: 'test-one', group: 'Test peers' });
-  const two = await api('/sessions', 'POST', { provider: 'shell', cwd: dir, title: 'test-two', group: 'Test peers' });
+  const peers = await api('/teams','POST',{name:'Test peers',mission:'Synthetic shared fixture',cwd:dir,host:'local'});
+  const one = await api('/sessions', 'POST', { provider: 'shell', cwd: dir, title: 'test-one', teamId:peers.id });
+  const two = await api('/sessions', 'POST', { provider: 'shell', cwd: dir, title: 'test-two', teamId:peers.id });
   assert.equal(one.agentToken, undefined);
   function attach(id) {
     return new Promise((resolve, reject) => {
@@ -125,7 +126,7 @@ test('real PTYs, persistent sessions, scoped mailboxes, and isolated browsers', 
   });
   await t.test('teams launch role terminals and reuse duplicate running roles', async () => {
     const team=await api('/teams','POST',{name:'Verification team',mission:'Check local integration.',cwd:dir,host:'local'});
-    await api('/sessions/'+one.id,'PATCH',{group:team.name});
+    const member=await api('/sessions','POST',{provider:'shell',cwd:dir,teamId:team.id});
     const briefing=await api('/teams/'+team.id+'/brief','POST',{});
     assert.equal(briefing.count,1);
     const launched=await api('/teams/'+team.id+'/start','POST',{roles:[{name:'Verifier',provider:'shell',assignment:'Verify.'}]});
@@ -165,12 +166,13 @@ test('real PTYs, persistent sessions, scoped mailboxes, and isolated browsers', 
   await t.test('working sessions support scoped agents, progress, wrap-up and carry-forward', async () => {
     const work=await api('/work-sessions','POST',{title:'Verification work',topics:'Alpha: Finish API\nBeta: Verify interface'});
     const alpha=work.projects[0], beta=work.projects[1];
-    await api('/sessions/'+one.id,'PATCH',{scope:{workSessionId:work.id,projectId:alpha.id,goalId:alpha.goals[0].id}});
-    await api('/sessions/'+two.id,'PATCH',{scope:{workSessionId:work.id}});
+    await api('/work-sessions/'+work.id+'/projects/'+alpha.id,'PATCH',{cwd:dir});
+    const scoped = await api('/sessions','POST',{provider:'shell',scope:{workSessionId:work.id,projectId:alpha.id,goalId:alpha.goals[0].id}});
     const privateState=JSON.parse(fs.readFileSync(path.join(dir,'state.json')));
-    const credential=privateState.sessions.find(s=>s.id===one.id).agentToken;
+    const credential=privateState.sessions.find(s=>s.id===scoped.id).agentToken;
     const agent=async body=>{const r=await fetch(base+'/api/agent',{method:'POST',headers:{'x-super-terminal-agent':credential,'content-type':'application/json'},body:JSON.stringify(body)});return{status:r.status,data:await r.json()};};
-    assert.ok((await agent({command:'peers'})).data.peers.some(s=>s.id===two.id));
+    assert.equal((await agent({command:'peers'})).data.peers.length,0);
+    assert.ok(!JSON.stringify((await agent({command:'context'})).data).includes('Beta'));
     assert.equal((await agent({command:'progress',goal:beta.goals[0].id,status:'done',notes:'Must be blocked'})).status,400);
     assert.equal((await agent({command:'progress',status:'done'})).status,400);
     assert.equal((await agent({command:'progress',status:'done',notes:'Verified in integration test.'})).data.status,'done');
@@ -187,9 +189,10 @@ test('real PTYs, persistent sessions, scoped mailboxes, and isolated browsers', 
     const state=await api('/state');
     const canonical=state.tasks.find(task=>task.id===goal.id);
     assert.ok(state.projects.some(p=>p.id===canonical.projectId));
-    await api('/sessions/'+one.id,'PATCH',{scope:{workSessionId:work.id,projectId:project.id,goalId:goal.id}});
+    await api('/work-sessions/'+work.id+'/projects/'+project.id,'PATCH',{cwd:dir});
+    const scoped = await api('/sessions','POST',{provider:'shell',scope:{workSessionId:work.id,projectId:project.id,goalId:goal.id}});
     const stored=JSON.parse(fs.readFileSync(path.join(dir,'state.json')));
-    const token=stored.sessions.find(s=>s.id===one.id).agentToken;
+    const token=stored.sessions.find(s=>s.id===scoped.id).agentToken;
     const agent=async body=>{
       const response=await fetch(base+'/api/agent',{method:'POST',headers:{'x-super-terminal-agent':token,'content-type':'application/json'},body:JSON.stringify(body)});
       return {status:response.status,data:await response.json()};
@@ -206,8 +209,48 @@ test('real PTYs, persistent sessions, scoped mailboxes, and isolated browsers', 
     assert.equal((await agent({command:'task',taskId:first.data.task.id,eventId:'stale',expectedRevision:1,status:'doing'})).status,400);
     const noEvidence=await fetch(base+'/api/work-sessions/'+work.id+'/goals/'+goal.id,{method:'PATCH',headers:{'x-super-terminal':auth,'content-type':'application/json'},body:JSON.stringify({status:'done'})});
     assert.equal(noEvidence.status,400);
-    const prompt=await api('/sessions/'+one.id+'/prompt','POST',{text:'Review the fixture at the next checkpoint.'});
+    const prompt=await api('/sessions/'+scoped.id+'/prompt','POST',{text:'Review the fixture at the next checkpoint.'});
     assert.equal(prompt.delivery,'queued');
+  });
+  await t.test('project contexts, explicit sharing, focus, receipts and project moves remain isolated',async()=>{
+    const work=await api('/work-sessions','POST',{title:'Private mixed work',topics:'North: North only\nSouth: South only'});
+    for (const project of work.projects) {
+      const cwd=path.join(dir,project.id);fs.mkdirSync(cwd);
+      await api('/work-sessions/'+work.id+'/projects/'+project.id,'PATCH',{cwd});
+    }
+    const state=await api('/state'), north=state.projects.find(p=>p.id===work.projects[0].canonicalProjectId),south=state.projects.find(p=>p.id===work.projects[1].canonicalProjectId);
+    const a=await api('/sessions','POST',{provider:'shell',projectId:north.id}),b=await api('/sessions','POST',{provider:'shell',projectId:south.id});
+    const stored=JSON.parse(fs.readFileSync(path.join(dir,'state.json')));
+    const agent=async(id,body)=>{
+      const r=await fetch(base+'/api/agent',{method:'POST',headers:{'x-super-terminal-agent':stored.sessions.find(s=>s.id===id).agentToken,'content-type':'application/json'},body:JSON.stringify(body)});
+      return {status:r.status,data:await r.json()};
+    };
+    await api('/context','PUT',{projectId:north.id,content:'NORTH_SECRET'});
+    await api('/context','PUT',{projectId:south.id,content:'SOUTH_SECRET'});
+    assert.equal((await agent(a.id,{command:'context'})).data.content,'NORTH_SECRET');
+    assert.doesNotMatch(JSON.stringify((await agent(a.id,{command:'tasks'})).data),/South/);
+    assert.equal((await agent(a.id,{command:'send',to:b.id,message:'Blocked'})).status,400);
+    await api('/focus','POST',{agentId:a.id,viewId:a.id,windowId:'fixture'});
+    assert.equal((await api('/state')).coordinator.focus.projectId,north.id);
+    assert.equal((await agent(a.id,{command:'context'})).data.focus,undefined);
+    const message=await api('/sessions/'+a.id+'/prompt','POST',{text:'Owner note'});
+    assert.equal(message.delivery,'queued');
+    assert.ok((await agent(a.id,{command:'inbox'})).data.messages.some(m=>m.id===message.id));
+    assert.equal((await api('/messages?agentId='+a.id)).find(m=>m.id===message.id).delivery,'read');
+    const team=await api('/teams','POST',{name:'Explicit share',mission:'Shared synthetic context',cwd:north.cwd,projectId:north.id});
+    await api('/sessions/'+a.id,'PATCH',{teamId:team.id}); await api('/sessions/'+b.id,'PATCH',{teamId:team.id});
+    assert.equal((await api('/state')).sessions.find(s=>s.id===b.id).projectId,south.id);
+    assert.equal((await agent(a.id,{command:'send',to:b.id,message:'Explicit shared message'})).status,200);
+    const moved=await api('/sessions/'+a.id+'/project','PATCH',{projectId:south.id});
+    assert.equal(moved.session.contextIsolation,'restart-required'); assert.equal(moved.session.capabilities.mailbox,false);
+    assert.equal(moved.session.capabilities.continuationHistoryId,null);
+    assert.equal((await agent(a.id,{command:'context'})).status,400);
+    assert.equal((await agent(a.id,{command:'inbox'})).status,400);
+    assert.equal((await api('/state')).sessions.find(s=>s.id===a.id).status,'running','tracking move preserves process');
+    const fresh=await api('/sessions','POST',{provider:'shell',projectId:south.id});
+    assert.equal(fresh.contextIsolation,undefined);
+    const manual=await api('/sessions/'+fresh.id+'/project','PATCH',{projectId:null});
+    assert.equal(manual.session.projectId,null); assert.equal(manual.session.projectAssignment.source,'manual');
   });
   await t.test('continuous controls are persisted and process stop revokes enrollment', async () => {
     assert.equal((await api('/coordinator/control','POST',{state:'paused'})).state,'paused');

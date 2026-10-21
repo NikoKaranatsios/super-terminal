@@ -22,13 +22,13 @@ Sources: [agent platform](../../server/agent-platform.mjs), [Python helper](../.
 
 ## T2 — Team membership, delivery, and bridge recovery
 
-**Implemented.** Managed team membership uses stable IDs; legacy equal-name peers also require the same host/folder. Shared assignment handling sends a checkpoint handoff and increments an assignment revision. Task create/report events are scoped, deduplicated and reject stale assignment metadata; private helper outboxes support retry. Chat supports team edits, briefings and retrying missing roles.
+**Implemented.** Peer sharing requires explicit team IDs. Neither equal labels/folders nor shared human sessions grant access. Context files use project/team/agent ID keys; legacy label-keyed files are retained without automatically exposing them. Messages bind to recipient project, team and assignment revision; stale queued messages are withheld. Reads record fetched status, not acceptance. Source-project IDs persist with shared task reports and messages, so removing an agent does not erase their origin. Project moves and leaving teams preserve the process but suspend platform context; use a fresh agent for the new boundary.
 
-**Remaining gap.** Context files still use group names. Fetching a mailbox marks messages read, not accepted; prompts remain cooperative. Only managed agents have tools. Losing a managed SSH transport loses its reverse bridge; attaching remote tmux does not rebuild it.
+**Remaining gap.** Fetching a mailbox marks messages read, not accepted; prompts remain cooperative. Only managed agents have tools. Losing a managed SSH transport loses its reverse bridge; attaching remote tmux does not rebuild it. API filtering cannot erase model memory or sandbox files accessible to the provider's operating-system account.
 
 **Implementation.**
 
-- Introduce stable team/group identity distinct from display names, with an explicit rule for same-working-session communication. Migrate existing messages/context references without discarding conversations.
+- Preserve stable team/project identity and explicit sharing. Keep old unscoped messages/context owner-readable without automatically granting agent access; any migration must retain provenance.
 - Share assignment mutations across Conductor and API. Queue a scope/mission handoff when an enrolled agent changes assignment and preserve current work until the agent handles the message.
 - Expose existing team mission update, briefing, and adding members through validated chat actions. Keep team size bounded and partial results visible.
 - Represent queued, fetched, and acknowledged states accurately. Do not claim a queued message was delivered into a running CLI's prompt. Add acknowledgment only if the agent has actually sent it; no keystroke injection.

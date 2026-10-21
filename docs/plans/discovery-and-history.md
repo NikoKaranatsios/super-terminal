@@ -6,7 +6,11 @@ Sources: [discovery](../../server/discovery.mjs), [remote reader](../../server/r
 
 ## D1 — Healthy inventories and process identity
 
-**Current gap.** Local tmux/process errors are flattened into empty arrays. The local activity pass has no scan-health signal and can interpret an unavailable source as process exits. The remote reader catches some failures without describing which sources were incomplete. External IDs and persisted assignments rely on PIDs, which the OS can reuse. The fixed missing-TTY error has regression coverage; other malformed input and disappearing-process paths do not have equivalent coverage.
+**Implemented.** Project classification uses verified Git roots, canonical paths and longest root containment within an exact environment. Explicit manual moves and Unassigned are preserved; enrolled project identity is pinned. External assignment identity includes exact local start identity or remote boot/start ticks; tmux identity includes the server incarnation. Stale assignments are ignored. Synthetic fixtures cover PID/server reuse, same-name roots, symlinks, worktrees, malformed Git markers and nonblocking reads.
+
+**Current gap.** Local tmux/process errors are flattened into empty arrays. The local activity pass has no scan-health signal and can interpret an unavailable source as process exits. The remote reader catches some failures without describing which sources were incomplete. Lifecycle display and source-health acceptance remain broader than assignment identity tests.
+
+An installed startup also stalled in a synchronous filesystem open, then recovered without a code change. Read-only Node/Electron probes did not reproduce the cause. Isolate filesystem discovery/history reads behind a bounded worker or process so an operating-system open delay cannot stall the service; verify with a controlled stalled-reader fixture. The observed healthy response is recovery evidence, not a root-cause fix.
 
 **Implementation.**
 

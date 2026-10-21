@@ -3,6 +3,7 @@ import { parseTopics, carryProjects, mergeProjects, wrapSummary, resolveScope, r
 import { text, localDirectory, validHost, home } from './core.mjs';
 import { initializeTasks, createTask, updateTask } from './tasks.mjs';
 import { controlAgent, removeAgent } from './lifecycle.mjs';
+import { setProjectAssignment } from './project-classification.mjs';
 
 function multiline(value, limit, label) {
   if (typeof value !== 'string' || value.length > limit || value.includes('\0')) throw new Error(`${label} must be text of up to ${limit} characters.`);
@@ -10,7 +11,7 @@ function multiline(value, limit, label) {
 }
 function save(context, result) { context.store.save(); return result; }
 function location(action, context) { return resolveLaunchLocation(context.store.state, action, context.allowedHosts || []); }
-function teamMembers(state, team) { return state.sessions.filter(s => s.teamId === team.id || (!s.teamId && s.group === team.name && s.host === team.host && s.cwd === team.cwd)); }
+function teamMembers(state, team) { return state.sessions.filter(s => s.teamId === team.id && !s.contextIsolation); }
 const teamLaunchLocks = new WeakMap();
 function validatedRoles(members) {
   if (!Array.isArray(members) || members.length < 1 || members.length > 6) throw new Error('A team needs 1–6 agents per launch.');
@@ -94,7 +95,7 @@ export async function performAction(action, context) {
   }
   if (['create_task', 'create_goal'].includes(action.type)) {
     const resolved = location(action, context);
-    const task = createTask(state, { title: action.name, notes: action.text || '', status: action.state || 'todo', projectId: resolved.projectId, scope: resolved.scope }, { actor: 'conductor' });
+    const task = createTask(state, { title: action.name, notes: action.text || '', status: action.state || 'todo', projectId: resolved.projectId, scope: resolved.scope }, { actor: 'conductor', contentProjectIds:context.context?.projectIds || [] });
     return save(context, { result: 'Task created', task });
   }
   if (['update_task', 'update_goal', 'goal_progress'].includes(action.type)) {
@@ -102,7 +103,7 @@ export async function performAction(action, context) {
     if (action.name) patch.title = action.name;
     if (action.text) patch.notes = action.text;
     if (action.state) patch.status = action.state;
-    const task = updateTask(state, action.target || action.taskId, patch, { actor: 'conductor' });
+    const task = updateTask(state, action.target || action.taskId, patch, { actor: 'conductor', contentProjectIds:context.context?.projectIds || [] });
     return save(context, { result: 'Task updated', task, goal: task });
   }
   if (action.type === 'resume_conversation') {
@@ -125,7 +126,7 @@ export async function performAction(action, context) {
     if (!name || !mission) throw new Error('A team needs a name and mission.');
     validatedRoles(action.members);
     if (state.teams.some(t => t.name.toLowerCase() === name.toLowerCase())) throw new Error('That team already exists; add or retry its missing members.');
-    const team = { id: randomUUID(), name, mission, scope: resolved.scope, host: resolved.host, cwd: resolved.cwd, projectId: resolved.projectId, createdAt: new Date().toISOString() };
+    const team = { id: randomUUID(), name, mission, scope: resolved.scope, host: resolved.host, cwd: resolved.cwd, projectId: resolved.projectId, sharedProjectIds:[resolved.projectId].filter(Boolean),contentProjectIds:context.context?.projectIds || [resolved.projectId].filter(Boolean),createdAt: new Date().toISOString() };
     state.teams.push(team); store.save();
     return launchTeamMembers(team, action.members, context);
   }
@@ -138,7 +139,7 @@ export async function performAction(action, context) {
       if (state.teams.some(t => t.id !== team.id && t.name.toLowerCase() === name.toLowerCase())) throw new Error('That team name already exists.');
       const mission = action.text ? multiline(action.text, 12000, 'Mission') : team.mission;
       const members = teamMembers(state, team);
-      Object.assign(team, { name, mission });
+      Object.assign(team, { name, mission,contentProjectIds:[...new Set([...(team.contentProjectIds || []),...(context.context?.projectIds || [])])] });
       for (const member of members) Object.assign(member, { teamId: team.id, group: name });
       return save(context, { result: 'Team updated; send a briefing to notify its agents.', team });
     }
@@ -178,6 +179,13 @@ export async function performAction(action, context) {
   }
   if (action.type === 'assign_agent') {
     const target = (await context.liveSessions()).find(s => s.id === action.target); if (!target) throw new Error('Agent not found.');
+    // Joining a team explicitly shares context without moving the agent's project.
+    if (action.teamId && !action.projectId && !action.taskId && !action.scope && !action.workSessionId) {
+      const team = state.teams.find(t => t.id === action.teamId);
+      if (!team) throw new Error('Team not found.');
+      if (target.kind !== 'managed') throw new Error('Only enrolled agents can join a team mailbox.');
+      return updateAgent(context,target.id,{teamId:team.id});
+    }
     const resolved = location(action, context);
     if (!resolved.projectId && !resolved.teamId && !resolved.scope && !resolved.taskId) throw new Error('Choose an existing project, task, team, or working session.');
     const team = state.teams.find(t => t.id === resolved.teamId), project = state.projects.find(p => p.id === resolved.projectId);
@@ -188,7 +196,8 @@ export async function performAction(action, context) {
       if (resolved.taskId) updateTask(state, resolved.taskId, { agentId: target.id }, { actor: 'conductor' });
       return save(context, { result: 'Assignment updated; handoff queued.', agent: result });
     }
-    state.assignments ||= {}; state.assignments[target.id] = { ...patch, startedAt: target.startedAt || null };
+    const assignment = setProjectAssignment(state,target,resolved.projectId,{actor:'conductor'});
+    Object.assign(assignment,patch);
     return save(context, { result: 'Assigned for tracking; external agents have no platform mailbox.', id: target.id });
   }
   if (action.type === 'session_state') {

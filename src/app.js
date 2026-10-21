@@ -4,6 +4,10 @@ import './style.css';
 import { Workspace } from './workspace.mjs';
 import { terminalTheme, applyTerminalPalette } from './terminal-theme.mjs';
 import { conductorTurnMarkup, traceMarkup } from './console-format.mjs';
+import { markdownText } from './markdown.mjs';
+import { helpSections } from './help-guide.mjs';
+import { backgroundStatusMarkup } from './help-view.mjs';
+import { agentCapabilities, projectForAgent, projectOptions, messageTransport, messageReceiptMarkup, messageDeliveryLabel } from './agent-view.mjs';
 import { agentTitle, agentContext, processLabel, canControl, projectWork, overviewMarkup, projectMarkup, taskMarkup, teamsMarkup, mergeOutput } from './work-views.mjs';
 
 const $ = s => document.querySelector(s);
@@ -19,10 +23,12 @@ const workspaceKey = 'workspace:'+(initial.get('window') || 'main');
 const layout = new Workspace(localStorage.getItem(workspaceKey));
 if(initial.get('environment')) environment=initial.get('environment');
 let restoring=false, workspaceReady=false;
+let lastStateAt=null,focusContext=null,focusSignature='',focusTimer,docsSection='overview';
+try{focusContext=JSON.parse(localStorage.getItem('focus:'+workspaceKey) || 'null');}catch{}
 applyTerminalPalette(document.documentElement);
 function saveWorkspace(){localStorage.setItem(workspaceKey,layout.serialize());}
-function tabLabel(id){const s=[...(state?.sessions||[]),...(state?.history||[])].find(s=>s.id===id);return id==='conductor'?'Conductor':id==='settings'?'Settings':id==='activity'?'Activity':id==='overview'?'All projects':id==='teams'?'Teams':id.startsWith('messages:')?id.slice(9)||'Team messages':s?agentTitle(s,state):views.get(id)?.title || 'Terminal';}
-function focusPane(paneId){const pane=layout.focus(paneId);selected=pane.active || '';for(const el of document.querySelectorAll('.pane'))el.classList.toggle('focused',el.dataset.pane===paneId);document.title=(tabLabel(selected)||'Super Terminal')+' — Super Terminal';if(state)sidebar();saveWorkspace();}
+function tabLabel(id){const s=[...(state?.sessions||[]),...(state?.history||[])].find(s=>s.id===id);return id==='conductor'?'Conductor':id==='settings'?'Settings':id==='docs'?'Docs':id==='activity'?'Activity':id==='overview'?'All projects':id==='teams'?'Teams':id.startsWith('messages:')?id.slice(9)||'Team messages':s?agentTitle(s,state):views.get(id)?.title || 'Terminal';}
+function focusPane(paneId){const pane=layout.focus(paneId);selected=pane.active || '';for(const el of document.querySelectorAll('.pane'))el.classList.toggle('focused',el.dataset.pane===paneId);document.title=(tabLabel(selected)||'Super Terminal')+' — Super Terminal';if(state){rememberFocus(selected);sidebar();}saveWorkspace();}
 function renderWorkspace(){
   const cache=$('#view-cache');for(const v of views.values()){v.element.hidden=true;cache.append(v.element);}
   const draw=node=>node.axis?`<div class="split ${node.axis}" data-split="${node.id}" style="--ratio:${node.ratio}">${draw(node.first)}<div class="divider" role="separator" tabindex="0" aria-label="Resize panels" aria-orientation="${node.axis==='row'?'vertical':'horizontal'}" aria-valuemin="15" aria-valuemax="85" aria-valuenow="${Math.round(node.ratio*100)}" data-divider="${node.id}"></div>${draw(node.second)}</div>`:`<section class="pane${node.id===layout.activePane?' focused':''}" data-pane="${node.id}"><div class="tab-bar" role="tablist" aria-label="Panel tabs">${node.tabs.map(id=>`<div class="tab${node.active===id?' active':''}"><button role="tab" aria-selected="${node.active===id}" data-tab="${escape(id)}" title="${escape(tabLabel(id))}">${escape(tabLabel(id))}</button><button class="close-tab" data-close="${escape(id)}" aria-label="Close ${escape(tabLabel(id))} tab">×</button></div>`).join('')}<button class="add-tab" data-add-tab="${node.id}" aria-label="New terminal tab">＋</button></div><div class="pane-content"><div class="panel-empty">Select an agent in the sidebar.<br><button data-close-panel="${node.id}">Close panel</button></div></div></section>`;
@@ -60,6 +66,26 @@ async function api(url, body, method = 'POST') {
 let noticeTimer;
 function notice(message) { $('#notice').textContent = message; $('#notice').hidden = false; clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { $('#notice').hidden = true; }, 7000); }
 function hostName(host) { return host === 'local' ? 'Local' : state?.hostNames[host] || host; }
+function setFocusContext(context) {
+  const next={viewId:context.viewId || selected,agentId:null,projectId:null,taskId:null,workSessionId:null,...context,environment:context.environment || environment,windowId:initial.get('window') || 'main'};
+  const signature=JSON.stringify(next);if(signature===focusSignature)return;
+  focusContext=next;focusSignature=signature;chatScope=null;
+  localStorage.setItem('focus:'+workspaceKey,signature);
+  clearTimeout(focusTimer);focusTimer=setTimeout(()=>api('/focus',next).catch(e=>notice('Current context could not be saved: '+e.message)),120);
+  renderChat();
+}
+function rememberFocus(id) {
+  if(restoring||!state)return;
+  const agent=[...state.sessions,...state.history].find(s=>s.id===id),tasks=projectWork(state).flatMap(p=>p.tasks);
+  if(agent){const project=projectForAgent(agent,state),task=project?tasks.find(t=>t.projectId===project.id&&(t.id===agent.taskId||t.id===agent.scope?.goalId||t.agentId===agent.id)):null;setFocusContext({viewId:id,agentId:agent.kind==='history'?null:agent.id,...(agent.kind==='history'?{historyId:agent.id}:{}),projectId:project?.id || null,taskId:task?.id || null,workSessionId:task?.scope?.workSessionId || (!agent.contextIsolation&&agent.projectAssignment?.source!=='manual'?agent.scope?.workSessionId:null) || null,environment:agent.host});}
+  else if(id.startsWith('task:')){const task=tasks.find(t=>t.id===id.slice(5)),project=projectWork(state).find(p=>p.id===task?.projectId);if(task)setFocusContext({viewId:id,projectId:task.projectId || null,taskId:task.id,workSessionId:task.scope?.workSessionId || null,environment:project?.host});}
+  else if(id.startsWith('project:')){const project=projectWork(state).find(p=>p.id===id.slice(8));if(project)setFocusContext({viewId:id,projectId:project.id,environment:project.host});}
+}
+function effectiveChatScope() {
+  if(chatScope!==null)return chatScope;
+  if(!focusContext)return {};
+  return Object.fromEntries(['projectId','taskId','workSessionId'].filter(key=>focusContext[key]).map(key=>[key,focusContext[key]]));
+}
 function assessment(s) { const a = state.coordinator.assessments?.[s.id]; return a?.version === s.updatedAt ? a : null; }
 function row(s, history = false) {
   const a = history ? assessment(s) : null;
@@ -108,10 +134,11 @@ function sidebar() {
   $('#team-messages-nav').hidden = !state.teams.length && !state.messages.length;
   $('#team-messages-nav').classList.toggle('selected', selected.startsWith('messages:'));
   $('#settings-nav').classList.toggle('selected', selected === 'settings');
+  $('#docs-nav').classList.toggle('selected', selected === 'docs');
 }
 function view(id, markup) {
   if (!views.has(id)) {
-    const element = document.createElement('section'); element.className = 'view'; element.innerHTML = markup; element.hidden = true; $('#view-cache').append(element); views.set(id,{ element });
+    const element = document.createElement('section'); element.className = 'view'; element.dataset.view=id; element.innerHTML = markup; element.hidden = true; $('#view-cache').append(element); views.set(id,{ element });
   }
   return views.get(id);
 }
@@ -130,10 +157,24 @@ function renderWorkView(id,v) {
   const markup=id==='overview'?overviewMarkup(state,workFilter):id==='teams'?teamsMarkup(state):id.startsWith('project:')?projectMarkup(state,id.slice(8)):taskMarkup(state,id.slice(5));
   updateMarkup(v.element.querySelector('.work-content'),markup);
 }
+function docs() {
+  const v=view('docs','<div class="caption"><span class="path">Docs · guide and live system status</span><button data-open-conductor>Open Conductor</button></div><div class="docs-content"><section class="docs-status" aria-label="Live background status"></section><nav class="docs-topics" aria-label="Guide topics"></nav><article class="docs-guide"></article></div>');
+  activate('docs','Docs');renderDocs();return v;
+}
+function renderDocs() {
+  const v=views.get('docs');if(!v||!state)return;
+  const status=v.element.querySelector('.docs-status'),expanded=new Set([...status.querySelectorAll('details[open]')].map(el=>el.querySelector('summary')?.textContent));
+  updateMarkup(status,backgroundStatusMarkup(state,lastStateAt));
+  for(const details of status.querySelectorAll('details'))details.open=expanded.has(details.querySelector('summary')?.textContent);
+  updateMarkup(v.element.querySelector('.docs-topics'),helpSections.map(section=>`<button data-doc-section="${section.id}" aria-current="${section.id===docsSection?'page':'false'}">${escape(section.title)}</button>`).join(''));
+  const section=helpSections.find(section=>section.id===docsSection) || helpSections[0];
+  updateMarkup(v.element.querySelector('.docs-guide'),markdownText(section.markdown,escape));
+}
 function scopeCaption() {
-  if(!chatScope)return 'All environments';
-  const session=state.workSessions?.find(s=>s.id===chatScope.workSessionId), projects=projectWork(state), project=projects.find(p=>p.id===chatScope.projectId), task=projects.flatMap(p=>p.tasks).find(t=>t.id===chatScope.taskId);
-  return [session?.title,project?.name,task?.title,chatScope.group].filter(Boolean).join(' / ') || 'All environments';
+  const scope=effectiveChatScope();
+  const session=state.workSessions?.find(s=>s.id===scope.workSessionId), projects=projectWork(state), project=projects.find(p=>p.id===scope.projectId), task=projects.flatMap(p=>p.tasks).find(t=>t.id===scope.taskId);
+  const text=[session?.title,project?.name,task?.title,scope.group].filter(Boolean).join(' / ');
+  return text?`${chatScope===null?'Current: ':''}${text}`:focusContext?.agentId&&chatScope===null?'Current agent · project unresolved':'All environments';
 }
 function askConductor(scope={},draft='') {
   chatScope=Object.keys(scope).length?scope:null;chat();
@@ -168,14 +209,14 @@ function chat() {
     $('#chat-input').oninput = e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(180,e.target.scrollHeight)+'px'; };
     $('#review-next').onclick = () => sendChat('Review the next unreviewed conversations. Update what is still open, finished, or uncertain, and ask me about the most important uncertainty.');
     $('#stop-chat').onclick = () => api('/coordinator/cancel',{}).catch(e => notice(e.message));
-    $('#clear-chat-scope').onclick=()=>{chatScope=null;renderChat();};
+    $('#clear-chat-scope').onclick=()=>{setFocusContext({viewId:'conductor'});chatScope={};renderChat();};
   }
   activate('conductor','Conductor'); renderChat(); $('#chat-input').focus();
 }
 function renderChat() {
   if (!state || !$('#chat-output')) return;
   const status = state.coordinator, output = $('#chat-output');
-  $('#chat-scope').textContent='Conductor · '+scopeCaption();$('#chat-scope').title=scopeCaption();$('#clear-chat-scope').hidden=!chatScope;
+  $('#chat-scope').textContent='Conductor · '+scopeCaption();$('#chat-scope').title=scopeCaption();$('#clear-chat-scope').hidden=!Object.keys(effectiveChatScope()).length&&!focusContext?.agentId;
   replaceMarkup('#conductor-loop',conductorLoop());
   const signature = JSON.stringify([status.history,status.trace,status.events]);
   if (output.dataset.signature !== signature) {
@@ -194,13 +235,13 @@ async function sendChat(prompt, automatic = false) {
   if (state.coordinator.running) return;
   state.coordinator.running = true; renderChat();
   try {
-    const request = api('/coordinator',{ prompt, automatic, environment, ...(chatScope || {}) });
+    const request = api('/coordinator',{ prompt, automatic, environment, ...effectiveChatScope(), focus:focusContext });
     setTimeout(() => refresh(), 500);
     await request; await refresh();
   } catch (e) { notice(e.message); state.coordinator.running = false; renderChat(); }
 }
 function connectTerminal(s) {
-  const v = view(s.id, `<div class="caption terminal-caption"><span class="path terminal-identity"></span><span class="connection">Connecting…</span><button class="reconnect" hidden>Reconnect</button></div><div class="process-controls"></div><form class="agent-prompt" hidden><label>Agent mailbox <input name="prompt" maxlength="12000" autocomplete="off" required aria-label="Prompt this agent at its next checkpoint"></label><button type="submit">Queue prompt</button><button type="button" class="cancel-prompt">Cancel</button></form><div class="terminal"></div>`);
+  const v = view(s.id, `<div class="caption terminal-caption"><span class="path terminal-identity"></span><span class="connection">Connecting…</span><button class="reconnect" hidden>Reconnect</button></div><div class="process-controls"></div><div class="agent-assignment"></div><div class="terminal"></div>`);
   activate(s.id, agentTitle(s,state));
   v.agentId=s.id;renderTerminalHeader(v,s);
   if (!v.term) {
@@ -212,35 +253,98 @@ function connectTerminal(s) {
     v.connect = () => {
       if (v.ws && v.ws.readyState < 2) return;
       const status = v.element.querySelector('.connection'), retry = v.element.querySelector('.reconnect');
-      status.textContent = 'Connecting…'; retry.hidden = true;
+      status.textContent = 'Connecting…'; retry.hidden = true;v.terminalReady=false;
       v.term.reset();
       v.ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/terminal?token=${encodeURIComponent(token)}&id=${encodeURIComponent(s.id)}`);
-      v.ws.onmessage = e => { const m = JSON.parse(e.data); if (m.type === 'output') v.term.write(m.data); if (m.type === 'ready') { status.textContent = ''; v.resize(); } if (m.type === 'error') { status.textContent = m.message; } if (m.type === 'exit') status.textContent = 'Detached'; };
-      v.ws.onclose = () => { if (!status.textContent) status.textContent = 'Disconnected'; retry.hidden = false; };
+      v.ws.onmessage = e => { const m = JSON.parse(e.data); if (m.type === 'output') v.term.write(m.data); if (m.type === 'ready') { status.textContent = '';v.terminalReady=true;v.resize(); } if (m.type === 'error') { status.textContent = m.message;v.terminalReady=false; } if (m.type === 'exit') {status.textContent = 'Detached';v.terminalReady=false;} };
+      v.ws.onclose = () => { if (!status.textContent) status.textContent = 'Disconnected'; retry.hidden = false;v.terminalReady=false; };
     };
     v.element.querySelector('.reconnect').onclick = v.connect; v.connect();
-    const form=v.element.querySelector('.agent-prompt');
-    form.querySelector('.cancel-prompt').onclick=()=>{form.hidden=true;v.term.focus();};
-    form.onsubmit=async e=>{e.preventDefault();const input=form.elements.prompt,text=input.value.trim();if(!text)return;const result=await performAction('agent:'+s.id,()=>api('/sessions/'+encodeURIComponent(s.id)+'/prompt',{text}),'Prompt queued for the agent’s next checkpoint.');if(result&&result.ok!==false&&!result.partial){input.value='';form.hidden=true;v.term.focus();}};
   }
+  renderTerminalHeader(v,s);installAgentTools(v,s);
   requestAnimationFrame(() => { v.resize(); v.term.focus(); });
 }
 function renderTerminalHeader(v,s) {
   const label=v.element.querySelector('.terminal-identity');if(!label)return;
   label.textContent=agentTitle(s,state)+' · '+hostName(s.host);label.title=[agentTitle(s,state),agentContext(s,state),s.cwd].filter(Boolean).join('\n');
   const busy=pendingActions.has('agent:'+s.id), control=canControl(s);
-  updateMarkup(v.element.querySelector('.process-controls'),`<span class="process-context" title="${escape(agentContext(s,state)+'\n'+s.cwd)}">${escape(agentContext(s,state))}</span><span class="process-state">${escape(processLabel(s))}</span>${control?`<button data-agent-control="${s.status==='paused'?'running':'paused'}" data-agent-target="${escape(s.id)}"${busy?' disabled':''}>${s.status==='paused'?'Resume process':'Pause process'}</button><button data-agent-control="stopped" data-agent-target="${escape(s.id)}"${busy?' disabled':''}>Stop process</button>${s.kind==='managed'?`<button data-agent-prompt="${escape(s.id)}"${busy||s.status==='paused'?' disabled':''}>Prompt</button>`:''}`:`<span class="muted">${s.runtime?'Service controls protected':s.connectionLost?'Reconnect before controlling this agent':'Process controls unavailable'}</span>`}${actionProblems.has('agent:'+s.id)?`<span class="process-problem" role="status">${escape(actionProblems.get('agent:'+s.id))}</span>`:''}`);
+  updateMarkup(v.element.querySelector('.process-controls'),`<span class="process-context" title="${escape(agentContext(s,state)+'\n'+s.cwd)}">${escape(agentContext(s,state))}</span><span class="process-state">${escape(processLabel(s))}</span>${control?`<button data-agent-control="${s.status==='paused'?'running':'paused'}" data-agent-target="${escape(s.id)}"${busy?' disabled':''}>${s.status==='paused'?'Resume process':'Pause process'}</button><button data-agent-control="stopped" data-agent-target="${escape(s.id)}"${busy?' disabled':''}>Stop process</button>`:`<span class="muted">${s.runtime?'Service controls protected':s.connectionLost?'Reconnect before controlling this agent':'Process controls unavailable'}</span>`}${actionProblems.has('agent:'+s.id)?`<span class="process-problem" role="status">${escape(actionProblems.get('agent:'+s.id))}</span>`:''}`);
   if(v.term)v.term.options.disableStdin=['paused','stopped','exited'].includes(s.status)||s.runtime;
 }
-function refreshTerminalHeaders(){if(!state)return;for(const v of views.values())if(v.agentId){const s=state.sessions.find(s=>s.id===v.agentId);if(s)renderTerminalHeader(v,s);}}
+function refreshTerminalHeaders(){if(!state)return;for(const v of views.values())if(v.agentId){const s=[...state.sessions,...state.history].find(s=>s.id===v.agentId);if(s){renderTerminalHeader(v,s);renderAgentTools(v,s);}}}
+function installAgentTools(v,s) {
+  v.agentId=s.id;
+  if(!v.messageForm){
+    const form=document.createElement('form');form.className='agent-message';
+    form.innerHTML='<div class="agent-message-hint"></div><label class="agent-message-label"><span>Message agent</span><textarea name="message" rows="2" maxlength="12000" aria-label="Message this agent" placeholder="Write a message…"></textarea></label><div class="agent-message-actions"><button type="submit" class="submit-agent-message">Queue message</button><button type="button" class="continue-agent" hidden>Continue in managed agent</button><button type="button" class="fresh-agent" hidden>Start fresh in project</button><span class="agent-message-status" role="status"></span></div><div class="agent-message-receipts"></div>';
+    v.element.append(form);v.messageForm=form;
+    form.onsubmit=e=>{e.preventDefault();sendAgentMessage(v);};
+    form.querySelector('textarea').onkeydown=e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'&&!e.isComposing){e.preventDefault();form.requestSubmit();}};
+    form.querySelector('.continue-agent').onclick=()=>continueAgent(v,false);
+    form.querySelector('.fresh-agent').onclick=()=>continueAgent(v,true);
+  }
+  renderAgentTools(v,s);refreshAgentMessages(v,s);
+}
+function renderAgentTools(v,s) {
+  if(!v.messageForm)return;
+  const capabilities=agentCapabilities(s),project=projectForAgent(s,state),current=project?.id || '',selectedProject=v.projectDraft ?? current;
+  const busy=pendingActions.has('agent:'+s.id),assignment=s.projectAssignment || {},source=assignment.source==='manual'?'Manual':assignment.source==='assigned'?'Assigned':project?'Detected':'Unclassified';
+  const assignmentMarkup=capabilities.assignProject?`<label>Project <select class="agent-project-select" aria-label="Agent project">${projectOptions(state,selectedProject,s.host)}</select></label><button class="move-agent-project"${busy||v.projectDraft===undefined||selectedProject===current&&assignment.source==='manual'?' disabled':''}>Move</button><small title="${escape(assignment.reason || '')}">${source}${assignment.stale?' · stale evidence':''}${s.contextIsolation==='restart-required'?' · fresh agent required':''}</small>`:`<span class="muted">${project?'Project: '+escape(project.name):'Project unclassified'}${s.kind==='history'?' · saved history':' · background service'}</span>`;
+  const assignmentEl=v.element.querySelector('.agent-assignment');updateMarkup(assignmentEl,assignmentMarkup);
+  if(capabilities.assignProject){
+    const select=assignmentEl.querySelector('select');select.value=selectedProject;select.disabled=busy;
+    select.onchange=()=>{v.projectDraft=select.value;renderAgentTools(v,s);};
+    assignmentEl.querySelector('button').onclick=()=>moveAgentProject(v);
+  }
+  const transport=messageTransport(s),form=v.messageForm;
+  form.querySelector('.agent-message-hint').textContent=transport.hint;
+  form.querySelector('.agent-message-label>span').textContent=transport.mode==='terminal'?'Terminal input':transport.mode==='copy'?'Message draft':'Agent message';
+  const submit=form.querySelector('.submit-agent-message');submit.textContent=transport.button;submit.disabled=busy;
+  const continuation=form.querySelector('.continue-agent');continuation.hidden=!capabilities.continuationHistoryId||capabilities.mailbox||s.runtime;continuation.disabled=busy;
+  const fresh=form.querySelector('.fresh-agent');fresh.hidden=s.contextIsolation!=='restart-required'||!project;fresh.disabled=busy;
+  updateMarkup(form.querySelector('.agent-message-receipts'),s.kind==='managed'?messageReceiptMarkup(v.mailboxRows || state.messages,s.id,v.lastReceipt):'');
+  form.querySelector('.agent-message-status').textContent=v.messageStatus || '';
+}
+async function moveAgentProject(v) {
+  const agent=[...state.sessions,...state.history].find(s=>s.id===v.agentId);if(!agent||v.projectDraft===undefined)return;
+  const chosen=v.projectDraft;
+  const result=await performAction('agent:'+agent.id,()=>api('/sessions/'+encodeURIComponent(agent.id)+'/project',{projectId:chosen || null},'PATCH'),'Project assignment updated. The running directory is unchanged.');
+  if(result&&result.ok!==false&&!result.partial){v.projectDraft=undefined;const updated=state.sessions.find(s=>s.id===agent.id);if(updated){renderAgentTools(v,updated);if(selected===agent.id)rememberFocus(agent.id);}}
+}
+async function refreshAgentMessages(v,s) {
+  if(v.messageLoading||s.kind!=='managed'||s.runtime)return;
+  v.messageLoading=true;
+  try{const rows=await api('/messages?agentId='+encodeURIComponent(s.id));v.mailboxRows=Array.isArray(rows)?rows:rows.messages || [];if(v.messageStatus?.startsWith('Mailbox status unavailable:'))v.messageStatus='';}catch(e){v.messageStatus='Mailbox status unavailable: '+e.message;}finally{v.messageLoading=false;renderAgentTools(v,state.sessions.find(agent=>agent.id===s.id) || s);}
+}
+async function sendAgentMessage(v) {
+  const s=[...state.sessions,...state.history].find(s=>s.id===v.agentId),input=v.messageForm.elements.message,text=input.value.trim();if(!s||!text)return;
+  const transport=messageTransport(s);
+  if(transport.mode==='mailbox'){
+    const result=await performAction('agent:'+s.id,()=>api('/sessions/'+encodeURIComponent(s.id)+'/prompt',{text}),'Message queued for the next agent checkpoint.');
+    if(result&&result.ok!==false&&!result.partial){v.lastReceipt={...result,id:result.id || result.messageId,text,read:result.read===true||result.delivery==='read'};v.messageStatus=result.note || 'Queued in the agent mailbox.';input.value='';await refreshAgentMessages(v,s);}else v.messageStatus='Message was not confirmed queued. Your draft is kept.';
+  }else if(transport.mode==='terminal'){
+    if(!v.term||!v.terminalReady||v.ws?.readyState!==1){v.messageStatus='Live terminal is not connected. Your draft is kept.';}
+    else{v.term.paste(text);v.ws.send(JSON.stringify({type:'input',data:'\r'}));input.value='';v.messageStatus='Input submitted to the terminal. Check its output for the result.';}
+  }else{
+    try{await navigator.clipboard.writeText(text);v.messageStatus='Copied. Paste this into the original terminal; no message was delivered here.';}
+    catch{input.focus();input.select();v.messageStatus='Clipboard unavailable. Text selected: copy it and paste into the original terminal.';}
+  }
+  renderAgentTools(v,[...state.sessions,...state.history].find(agent=>agent.id===s.id) || s);
+}
+async function continueAgent(v,fresh) {
+  const s=[...state.sessions,...state.history].find(s=>s.id===v.agentId);if(!s)return;
+  const capabilities=agentCapabilities(s),project=projectForAgent(s,state),text=v.messageForm.elements.message.value.trim();
+  if(fresh&&!project || !fresh&&!capabilities.continuationHistoryId)return;
+  const body=fresh?{provider:s.provider,projectId:project.id,cwd:project.cwd,host:project.host,task:text}:{historyId:capabilities.continuationHistoryId,host:s.host,task:text};
+  const result=await performAction('agent:'+s.id,()=>api('/sessions',body),fresh?'Fresh managed agent created in this project.':'Managed continuation requested. The original external terminal stays separate.');
+  if(result?.id&&result.ok!==false&&!result.partial){v.messageForm.elements.message.value='';connectTerminal(result);}
+}
 async function showConversation(s, external = false) {
-  const v = view(s.id, `<div class="caption"><span class="path" title="${escape(s.cwd)}">${escape(agentTitle(s,state))} · ${escape(hostName(s.host))}</span>${external ? '<span>External terminal · read only</span>' : '<button class="resume">Resume in terminal</button>'}</div><div class="history-pagination"><button class="load-earlier" hidden>Load earlier output</button><span class="history-coverage"></span></div><div class="output"></div>`);
+  const v = view(s.id, `<div class="caption"><span class="path" title="${escape(s.cwd)}">${escape(agentTitle(s,state))} · ${escape(hostName(s.host))}</span>${external ? '<span>External terminal · read only</span>' : '<span>Saved conversation</span>'}</div><div class="agent-assignment"></div><div class="history-pagination"><button class="load-earlier" hidden>Load earlier output</button><span class="history-coverage"></span></div><div class="output"></div>`);
   activate(s.id, `${s.provider} — ${hostName(s.host)}`);
   v.source = s;
   v.element.querySelector('.load-earlier').onclick=()=>updateConversation(v,external,true);
-  if (!external) v.element.querySelector('.resume').onclick = async () => {
-    try { const launched = await api('/sessions',{historyId:s.id,host:s.host}); await refresh(); connectTerminal(launched); } catch(e) { notice(e.message); }
-  };
+  installAgentTools(v,s);
   await updateConversation(v,external);
 }
 async function updateConversation(v,external = v.source.kind === 'external', earlier=false) {
@@ -285,7 +389,7 @@ async function renderMessages(group) {
     const rows=await api('/messages'+(group?'?group='+encodeURIComponent(group):''));
     const name=id=>{const agent=state.sessions.find(s=>s.id===id);return id==='you'?'you':id==='conductor'||id==='coordinator'?'conductor':agent?agentTitle(agent,state):id.slice(0,12);};
     const output=v.element.querySelector('.output'), bottom=output.scrollHeight-output.scrollTop-output.clientHeight<100;
-    const markup=(group?'':state.teams.map(t=>`<button class="agent" data-team="${escape(t.name)}">${escape(t.name)} →</button>`).join(''))+rows.map(m=>`<div class="line"><span class="speaker">${escape(name(m.from))} → ${escape(name(m.to))} · ${escape(m.group)} · ${new Date(m.createdAt).toLocaleTimeString()}${m.read?'':' · queued'}</span>${escape(m.text)}</div>`).join('')+(rows.length?'':'<div class="muted">No team messages yet. Agents share updates through their mailboxes; this thread shows each handoff as it arrives.</div>');
+    const markup=(group?'':state.teams.map(t=>`<button class="agent" data-team="${escape(t.name)}">${escape(t.name)} →</button>`).join(''))+rows.map(m=>`<div class="line"><span class="speaker">${escape(name(m.from))} → ${escape(name(m.to))} · ${escape(m.group)} · ${new Date(m.createdAt).toLocaleTimeString()} · ${messageDeliveryLabel(m)}</span>${escape(m.text)}</div>`).join('')+(rows.length?'':'<div class="muted">No team messages yet. Agents share updates through their mailboxes; this thread shows each handoff as it arrives.</div>');
     if(v.markup!==markup){output.innerHTML=markup;v.markup=markup;if(bottom)output.scrollTop=output.scrollHeight;}
   } catch(e){notice(e.message);} finally{v.loading=false;}
 }
@@ -316,6 +420,7 @@ function settings() {
   $('#save-prompts').onclick = async () => { try { const prompts=Object.fromEntries(['codex','claude','grok'].map(p=>[p,$('#prompt-'+p).value])); await api('/prompts',prompts,'PUT'); state.prompts=prompts; $('#saved').textContent='Saved.'; } catch(e) {notice(e.message);} };
 }
 async function open(id) {
+  if(id==='docs'){docs();return;}
   if(id==='overview'||id==='teams'||id.startsWith('project:')||id.startsWith('task:')){workView(id);return;}
   const s = [...state.sessions,...state.history].find(s=>s.id === id); if(!s) {const v=view(id,'<div class="output muted">Waiting for this agent to reconnect. You can also select its saved conversation in the sidebar.</div>');v.pending=true;activate(id,'Reconnecting…');return;}
   if(s.host !== environment) {environment=s.host; localStorage.setItem('environment',environment);}
@@ -331,11 +436,13 @@ async function newTerminal(provider = 'shell') {
 async function refresh() {
   if(refreshing) return; refreshing=true;
   try {
-    state = await api('/state');
+    state = await api('/state');lastStateAt=new Date().toISOString();
     document.querySelectorAll('[data-requires-state]').forEach(el=>el.disabled=false);
     sidebar();
     if(!workspaceReady)await restoreWorkspace();
+    rememberFocus(selected);
     renderChat();document.documentElement.style.setProperty('--text-size',state.preferences.fontSize+'px');
+    renderDocs();
     refreshTerminalHeaders();
     for(const [id,v] of views)if(v.work)renderWorkView(id,v);
     for(const tab of document.querySelectorAll('[data-tab]')){const label=tabLabel(tab.dataset.tab);tab.textContent=label;tab.title=label;}
@@ -343,7 +450,7 @@ async function refresh() {
     document.title=tabLabel(selected)+' — Super Terminal';
     for(const [id,v] of views)if(v.pending&&[...state.sessions,...state.history].some(s=>s.id===id)){v.element.remove();views.delete(id);const before=restoring,hostBefore=environment;restoring=true;await open(id);restoring=before;environment=hostBefore;localStorage.setItem('environment',environment);renderWorkspace();sidebar();}
     for(const v of views.values())if(v.term&&v.term.options.fontSize!==state.preferences.fontSize){v.term.options.fontSize=state.preferences.fontSize;v.resize();}
-    for(const pane of layout.panes()){const active=views.get(pane.active);if(pane.active?.startsWith('messages:'))renderMessages(pane.active.slice(9));if(active?.source){active.source=state.sessions.find(s=>s.id===pane.active)||active.source;updateConversation(active);}}
+    for(const pane of layout.panes()){const active=views.get(pane.active);if(pane.active?.startsWith('messages:'))renderMessages(pane.active.slice(9));if(active?.source){active.source=state.sessions.find(s=>s.id===pane.active)||active.source;updateConversation(active);}if(active?.agentId){const s=[...state.sessions,...state.history].find(s=>s.id===active.agentId);if(s)refreshAgentMessages(active,s);}}
     renderActivity();
     if(!bootBriefing && state.preferences.automaticBriefing && !state.coordinator.history.length && state.remote.every(r=>r.scannedAt || r.error) && !state.coordinator.running) {
       bootBriefing=true; sendChat('Read recent saved agent conversations across all environments. Tell me what still looks open, what appears finished, and ask what I want to focus on. Do not assume old work is still a priority.',true);
@@ -355,10 +462,10 @@ $('#environment').onchange = e => {
   const first=state.sessions.find(s=>s.host===environment && ['running','external','paused'].includes(s.status));
   if(first) open(first.id); else chat();
 };
-$('#conductor-nav').onclick=chat; $('#team-messages-nav').onclick=()=>messages(''); $('#settings-nav').onclick=settings;
+$('#conductor-nav').onclick=chat; $('#team-messages-nav').onclick=()=>messages(''); $('#settings-nav').onclick=settings;$('#docs-nav').onclick=docs;
 document.addEventListener('click',e=>{const button=e.target.closest('[data-id]'); if(button) open(button.dataset.id); const team=e.target.closest('[data-team]'); if(team) messages(team.dataset.team);});
 document.addEventListener('click',e=>{
-  const link=e.target.closest('#chat-output .console-markdown a[href]');
+  const link=e.target.closest('.console-markdown a[href]');
   if(!link || !window.superTerminalDesktop?.openLink)return;
   e.preventDefault();
   if(e.isTrusted)window.superTerminalDesktop.openLink(link.href).then(ok=>{if(!ok)notice('This link cannot be opened.');}).catch(error=>notice(error.message));
@@ -369,11 +476,12 @@ document.addEventListener('change',e=>{
 });
 document.addEventListener('click',async e=>{
   const work=e.target.closest('[data-work-view]');if(work)workView(work.dataset.workView);
+  const topic=e.target.closest('[data-doc-section]');if(topic){docsSection=topic.dataset.docSection;renderDocs();views.get('docs')?.element.querySelector('.docs-guide').scrollIntoView({block:'start'});}
+  if(e.target.closest('[data-open-conductor]'))chat();
   const ask=e.target.closest('[data-ask-scope]');if(ask){const scope=JSON.parse(ask.dataset.askScope);askConductor(scope,ask.textContent.includes('Create a team')?'Create a team to ': '');}
   const session=e.target.closest('[data-work-control]');if(session){const action=session.dataset.workControl;const result=await performAction('working-session',()=>action==='new'?api('/work-sessions',{title:'Working session '+((state.workSessions || []).length+1),topics:''}):api('/work-sessions/'+encodeURIComponent(workSessionId),{status:action},'PATCH'),action==='wrapped'?'Working session stopped. Agent processes continue independently.':action==='paused'?'Working session paused. Agent processes continue independently.':action==='new'?'Working session started. Describe your work in Conductor.':'Working session resumed.');if(action==='new'&&result?.id){workSessionId=result.id;localStorage.setItem('workingSessionSelection',workSessionId);sidebar();askConductor({workSessionId});}}
   const loop=e.target.closest('[data-loop-control]');if(loop)await performAction('coordinator-loop',()=>api('/coordinator/control',{state:loop.dataset.loopControl}),'Conductor loop '+loop.dataset.loopControl+'.');
   const control=e.target.closest('[data-agent-control]');if(control)await performAction('agent:'+control.dataset.agentTarget,()=>api('/sessions/'+encodeURIComponent(control.dataset.agentTarget)+'/control',{state:control.dataset.agentControl}),'Agent process '+control.dataset.agentControl+'.');
-  const prompt=e.target.closest('[data-agent-prompt]');if(prompt){const form=views.get(prompt.dataset.agentPrompt)?.element.querySelector('.agent-prompt');if(form){form.hidden=false;form.elements.prompt.focus();}}
 });
 document.addEventListener('keydown',e=>{
   const square=e.target.closest('[data-task-square]');if(!square)return;
@@ -385,6 +493,7 @@ window.superTerminalDesktop?.onAction(action=>{
   if(!state){notice('Connecting to the local service…');return;}
   if(action==='conductor' || action==='coordinator') chat();
   if(action==='settings') settings();
+  if(action==='docs')docs();
   if(action==='new-terminal') newTerminal();
   if(action==='split-right')splitPanel('row');
   if(action==='split-below')splitPanel('column');

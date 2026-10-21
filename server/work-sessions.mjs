@@ -47,8 +47,7 @@ export function scopeContext(workSessions, scope) {
   };
 }
 export function canCommunicate(a, b) {
-  const sameTeam = a.teamId && b.teamId ? a.teamId === b.teamId : !a.teamId && !b.teamId && !!a.group && a.group === b.group && !!a.cwd && a.cwd === b.cwd && a.host === b.host;
-  return !!sameTeam || !!(a.scope?.workSessionId && a.scope.workSessionId === b.scope?.workSessionId);
+  return !!(a.teamId && a.teamId === b.teamId);
 }
 export function carryProjects(previous) {
   return previous.projects.map(p => ({ ...p, id: randomUUID(), goals: p.goals.filter(g => g.status !== 'done').map(g => ({ ...g, id: randomUUID(), taskId: undefined, revision: undefined, carriedFromGoalId: g.id, status: ['blocked', 'stopped'].includes(g.status) ? g.status : 'todo' })) })).filter(p => p.goals.length);

@@ -10,6 +10,8 @@ Sources: [coordinator](../../server/coordinator.mjs), [actions](../../server/con
 
 **Remaining gap.** Direct editing of a nested project location through chat and complete migration validation of every legacy shape still need acceptance. Existing process assignments do not move their actual working directory automatically.
 
+Project context boundaries take precedence over global chat convenience. Global overview turns cannot write arbitrary prose into agent-facing records. Project/task turns have separate memory, prior turns and source attribution; explicit shared teams preserve their contributing project IDs. Global project/session creation is currently rejected by the content guard. A safe conversational creation flow must derive new project inputs from direct owner intent without carrying global memory or unrelated evidence, then continue in that project partition. Do not restore global dispatch merely to satisfy an older action-parity test.
+
 **Implementation.**
 
 - Define the relationship between a persistent project and its working-session instance. Preserve both concepts, but give them distinct identifiers or a validated link so the same `projectId` field cannot ambiguously mean either.
@@ -43,7 +45,7 @@ Sources: [coordinator](../../server/coordinator.mjs), [actions](../../server/con
 
 ## C3 — Bounded context, usage, and action accounting
 
-**Implemented.** Continuous collection uses no model. Eligible work changes and active unfinished work trigger paced decisions; empty/unchanged completed scopes stay listening without model calls. The loop persists run/pause/stop intent, backs off failures, and permits one reply at once. Input is capped at 24,000 bytes with omission counts; round usage is aggregated. Action results, duplicate receipts, cancellation state and provider-visible trace events persist. `conductor-policy.mjs` rechecks fresh active scope before autonomous mutations. Optional first briefings remain read-only.
+**Implemented.** Continuous collection uses no model. New reports, provider completion observations, changed work and focus trigger paced decisions; unchanged work stays listening without model calls. Decisions route through project partitions, with a global owner overview kept separate. Completion observations never directly mark tasks done. The loop persists run/pause/stop intent, backs off failures, and permits one reply at once. Input is capped at 24,000 bytes with omission counts; round usage is aggregated. Action results, context-bound duplicate receipts, cancellation state and provider-visible trace events persist. `conductor-policy.mjs` rechecks fresh active scope before autonomous mutations. Optional first briefings remain read-only. Quitting the service stops this loop; it is not an operating-system daemon.
 
 Response instructions request concise Markdown: the result first, normally 40–100 words or fewer, only material evidence/blockers/next steps, and one progress sentence during action rounds. Important uncertainty is retained; there is no hard truncation by word count. Bold, inline code and one optional highlight emphasize useful information. This is generation guidance; actual word/token savings and adherence require a provider-backed evaluation.
 

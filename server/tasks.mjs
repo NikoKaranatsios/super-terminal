@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { resolveScope } from './work-sessions.mjs';
+import { projectOf, allowedProjectIds, canReadProjectContent } from './project-access.mjs';
 
 export const TASK_STATUSES = ['todo', 'doing', 'blocked', 'done', 'stopped'];
 const own = (value, key) => Object.hasOwn(value, key);
@@ -39,10 +40,33 @@ function projectId(state, input, scope) {
   if (scoped && id !== scoped) throw new Error('Task project conflicts with its working-session scope.');
   return id;
 }
+function contentSources(...values) {
+  const sources = new Set();
+  for (const value of values) {
+    if (value == null) continue;
+    if (!Array.isArray(value) || value.some(id => typeof id !== 'string' || !id || id.length > 200 || id.includes('\0'))) throw new Error('Invalid content project provenance.');
+    for (const id of value) sources.add(id);
+  }
+  return [...sources].sort();
+}
+function inheritedSources(state, task) {
+  const sources = [], seen = new Set([task.id]);
+  let id = task.parentTaskId || (task.scope?.goalId !== task.id ? task.scope?.goalId : null) || task.carriedFromTaskId;
+  for (let depth = 0; id && depth < 64; depth++) {
+    if (seen.has(id)) throw new Error('Invalid content project ancestry.');
+    seen.add(id);
+    const parent = state.tasks?.find(t => t.id === id);
+    if (!parent) break;
+    sources.push(...contentSources(parent.contentProjectIds, parent.projectId ? [parent.projectId] : []));
+    id = parent.parentTaskId || (parent.scope?.goalId !== parent.id ? parent.scope?.goalId : null) || parent.carriedFromTaskId;
+    if (depth === 63 && id) throw new Error('Invalid content project ancestry.');
+  }
+  return sources;
+}
 function mirror(state, task) {
   for (const s of state.workSessions || []) for (const p of s.projects || []) {
     const goal = p.goals?.find(g => g.id === task.id);
-    if (goal) Object.assign(goal, { title: task.title, status: task.status, notes: task.notes, taskId: task.id, revision: task.revision });
+    if (goal) Object.assign(goal, { title: task.title, status: task.status, notes: task.notes, taskId: task.id, revision: task.revision, contentProjectIds: [...(task.contentProjectIds || [])] });
   }
 }
 function activity(task, type, actor, summary, at) {
@@ -61,7 +85,7 @@ export function initializeTasks(state) {
   const ids = new Set();
   for (const task of state.tasks) {
     if (!task || typeof task.id !== 'string' || !task.id || ids.has(task.id) || typeof task.title !== 'string' || typeof task.notes !== 'string' || !Number.isSafeInteger(task.revision) || task.revision < 1 || !Array.isArray(task.evidence) || !Array.isArray(task.activity)) throw new Error('Invalid persisted task record; original data must be preserved.');
-    validateStatus(task.status); ids.add(task.id);
+    validateStatus(task.status); contentSources(task.contentProjectIds); ids.add(task.id);
   }
   for (const s of state.workSessions || []) for (const p of s.projects || []) {
     let canonical = state.projects.find(c => c.id === p.canonicalProjectId || c.id === p.id);
@@ -75,15 +99,20 @@ export function initializeTasks(state) {
       let task = state.tasks.find(t => t.id === g.id);
       if (!task) {
         const at = s.startedAt || now();
-        task = { id: g.id, projectId: canonical.id, title: string(g.title, 'Goal title', 800, true), status: validateStatus(g.status || 'todo'), notes: string(g.notes || '', 'Goal notes', 6000), evidence: [], agentId: null, scope: { workSessionId: s.id, projectId: p.id, goalId: g.id }, revision: 1, createdAt: at, updatedAt: at, activity: [], legacyGoalId: g.id, carriedFromTaskId: g.carriedFromGoalId || null };
+        task = { id: g.id, projectId: canonical.id, title: string(g.title, 'Goal title', 800, true), status: validateStatus(g.status || 'todo'), notes: string(g.notes || '', 'Goal notes', 6000), evidence: [], agentId: null, scope: { workSessionId: s.id, projectId: p.id, goalId: g.id }, revision: 1, createdAt: at, updatedAt: at, activity: [], legacyGoalId: g.id, carriedFromTaskId: g.carriedFromGoalId || null, contentProjectIds: contentSources([canonical.id], g.contentProjectIds) };
         if (task.status === 'done') task.evidence = task.notes ? evidenceRows(task.notes.slice(0, 2000), 'legacy', at) : [];
         state.tasks.push(task);
       } else if (g.title !== task.title || g.status !== task.status || (g.notes || '') !== task.notes) {
         // Compatibility for old goal routes; shared API callers should updateTask directly.
-        updateTask(state, task.id, { title: g.title, status: g.status, notes: g.notes || '' }, { actor: 'legacy' });
+        updateTask(state, task.id, { title: g.title, status: g.status, notes: g.notes || '' }, { actor: 'legacy', contentProjectIds: g.contentProjectIds });
       }
+      task.contentProjectIds = contentSources(task.contentProjectIds, g.contentProjectIds);
       mirror(state, task);
     }
+  }
+  for (const task of state.tasks) {
+    task.contentProjectIds = contentSources(task.contentProjectIds, task.projectId ? [task.projectId] : [], inheritedSources(state, task));
+    mirror(state, task);
   }
   state.taskSchemaVersion = 1;
   return state.tasks;
@@ -101,12 +130,13 @@ export function createTask(state, input, options = {}) {
   if (input.agentId && !state.sessions?.some(a => a.id === input.agentId)) throw new Error('Assigned agent not found.');
   if (input.parentTaskId && !taskDescendsFrom(state, { id: '', projectId: project, scope, parentTaskId: input.parentTaskId }, input.parentTaskId)) throw new Error('Parent task is invalid or outside this project and working session.');
   const task = { id: randomUUID(), projectId: project, title, status, notes, evidence: evidence.length ? evidence : status === 'done' ? evidenceRows(notes.slice(0, 2000), actor, at) : [], agentId: input.agentId || null, scope, revision: 1, createdAt: at, updatedAt: at, activity: [], ...(input.parentTaskId ? { parentTaskId: input.parentTaskId } : {}) };
+  task.contentProjectIds = contentSources(project ? [project] : [], input.contentProjectIds, options.contentProjectIds, inheritedSources(state, task));
   activity(task, 'created', actor, notes || title, at);
   state.tasks ||= [];
   state.tasks.push(task);
   if (scope?.projectId && !input.parentTaskId) {
     const nested = state.workSessions.find(s => s.id === scope.workSessionId).projects.find(p => p.id === scope.projectId);
-    nested.goals.push({ id: task.id, taskId: task.id, title, notes, status, revision: task.revision });
+    nested.goals.push({ id: task.id, taskId: task.id, title, notes, status, revision: task.revision, contentProjectIds: [...task.contentProjectIds] });
     task.scope = { ...scope, goalId: task.id };
   }
   return task;
@@ -128,6 +158,7 @@ export function updateTask(state, id, patch, options = {}) {
     if (patch.agentId && !state.sessions?.some(a => a.id === patch.agentId)) throw new Error('Assigned agent not found.');
     next.agentId = patch.agentId || null;
   }
+  next.contentProjectIds = contentSources(original.contentProjectIds, original.projectId ? [original.projectId] : [], next.projectId ? [next.projectId] : [], patch.contentProjectIds, options.contentProjectIds, inheritedSources(state, next));
   const added = evidenceRows(patch.evidence, actor, at);
   if (next.status === 'done' && (original.status !== 'done' || patch.status === 'done')) {
     if (!added.length && !patch.notes?.trim()) throw new Error('Include evidence for completion.');
@@ -162,6 +193,10 @@ export function taskDescendsFrom(state, task, ancestorId) {
 function agentScope(state, agent, task) {
   if (!agent || agent.enrollmentRevokedAt || agent.status === 'stopped' || !agent.id) throw new Error('Agent enrollment is not active.');
   if (task.agentId && task.agentId !== agent.id) throw new Error('Task is assigned to another agent.');
+  const project = projectOf(state, agent);
+  const ownUnprojectedTask = !project && !task.projectId && agent.taskId && taskDescendsFrom(state,task,agent.taskId);
+  if (agent.contextIsolation || (!ownUnprojectedTask && (!project || task.projectId !== project))) throw new Error('Task is outside your assigned project.');
+  if (!canReadProjectContent(state, agent, task)) throw new Error('Task contains shared project content outside your current grant.');
   const scope = agent.scope;
   if (scope?.workSessionId) {
     if (task.scope?.workSessionId !== scope.workSessionId) throw new Error('Task is outside your assigned working session.');
@@ -174,8 +209,11 @@ function agentScope(state, agent, task) {
 /** Data updates only: accepting an event never launches agents or grants permissions. */
 export function recordTaskEvent(state, agent, input) {
   if (!agent?.id) throw new Error('Agent credential required.');
+  if (agent.enrollmentRevokedAt || agent.status === 'stopped') throw new Error('Agent enrollment is not active.');
   state.tasks ||= []; state.taskEvents ||= []; state.taskEventCursors ||= {};
   const actor = `agent:${agent.id}`;
+  const reportSources = contentSources([...allowedProjectIds(state, agent)], agent.contentProjectIds);
+  if (!canReadProjectContent(state, agent, { contentProjectIds: reportSources })) throw new Error('Agent retains project content outside its current grant; start a fresh agent.');
   const creating = input.operation === 'create' || input.command === 'create';
   const eventId = string(input.eventId || input.clientKey || randomUUID(), 'Event ID', 160, true);
   if (input.assignmentRevision !== undefined && Number(input.assignmentRevision) !== (agent.assignmentRevision || 0)) throw new Error('Assignment changed; refresh context before reporting.');
@@ -208,8 +246,9 @@ export function recordTaskEvent(state, agent, input) {
       scope = { ...scope, projectId: membership.id };
     }
     const candidate = { id: '', projectId: project, scope, parentTaskId: parentId, agentId: agent.id };
+    candidate.contentProjectIds = contentSources(reportSources, inheritedSources(state, candidate));
     agentScope(state, agent, candidate);
-    task = createTask(state, { title: input.title, notes: input.notes || '', status: input.status || 'todo', evidence: input.evidence, projectId: project, scope, agentId: agent.id, parentTaskId: parentId }, { actor });
+    task = createTask(state, { title: input.title, notes: input.notes || '', status: input.status || 'todo', evidence: input.evidence, projectId: project, scope, agentId: agent.id, parentTaskId: parentId }, { actor, contentProjectIds: reportSources });
   } else {
     task = state.tasks.find(t => t.id === taskId);
     if (!task) throw new Error('Task not found.');
@@ -217,9 +256,9 @@ export function recordTaskEvent(state, agent, input) {
     const patch = {};
     for (const field of ['status', 'notes', 'evidence']) if (input[field] != null) patch[field] = input[field];
     if (!Object.keys(patch).length) throw new Error('Report a status, note, or evidence.');
-    task = updateTask(state, task.id, patch, { actor, expectedRevision: input.expectedRevision, eventType: 'agent-report' });
+    task = updateTask(state, task.id, patch, { actor, expectedRevision: input.expectedRevision, eventType: 'agent-report', contentProjectIds: reportSources });
   }
-  const event = { id: eventId, key, fingerprint, taskId: task.id, agentId: agent.id, revision: task.revision, status: task.status, summary: (input.notes || input.title || '').slice(0, 600), createdAt: now(), sequence };
+  const event = { id: eventId, key, fingerprint, taskId: task.id, agentId: agent.id, revision: task.revision, status: task.status, summary: (input.notes || input.title || '').slice(0, 600), createdAt: now(), sequence, contentProjectIds: [...task.contentProjectIds] };
   state.taskEvents = [...state.taskEvents, event].slice(-500);
   if (creating) { task.creationKey = key; task.creationReceipt = event; }
   if (sequence !== null) state.taskEventCursors[cursorKey] = sequence;

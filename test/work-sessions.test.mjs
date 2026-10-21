@@ -48,6 +48,6 @@ test('scope links must belong to the same working-session tree', () => {
   assert.deepEqual(resolveScope([session],{workSessionId:'s',projectId:p.id,goalId:g.id}),{workSessionId:'s',projectId:p.id,goalId:g.id});
   assert.throws(()=>resolveScope([session],{workSessionId:'s',projectId:session.projects[1].id,goalId:g.id}));
   assert.throws(()=>resolveScope([session],{workSessionId:'s',goalId:g.id}));
-  assert.equal(canCommunicate({group:'a',scope:{workSessionId:'s'}},{group:'b',scope:{workSessionId:'s'}}),true);
+  assert.equal(canCommunicate({group:'a',scope:{workSessionId:'s'}},{group:'b',scope:{workSessionId:'s'}}),false);
   assert.equal(canCommunicate({group:'a',scope:{workSessionId:'s'}},{group:'b',scope:{workSessionId:'other'}}),false);
 });

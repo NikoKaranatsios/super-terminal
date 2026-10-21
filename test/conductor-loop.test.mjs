@@ -13,7 +13,7 @@ function harness(overrides = {}) {
   loop.start();
   return {loop,state,data,advance:n=>{time+=n;},calls:()=>calls,collected:()=>collected};
 }
-test('collection is free, empty/completed scopes do not call a model, changed/active rounds are bounded',async()=>{
+test('collection is free and only changed work triggers bounded decision rounds',async()=>{
   const h=harness();h.data.eligible=false;h.data.hasWork=false;
   await h.loop.tick();h.advance(1e8);await h.loop.tick();assert.equal(h.calls(),0);
   h.data.eligible=true;await h.loop.tick();assert.equal(h.calls(),0);
@@ -21,9 +21,9 @@ test('collection is free, empty/completed scopes do not call a model, changed/ac
   h.advance(5000);h.data.signature='changed';await h.loop.tick();assert.equal(h.calls(),1);
   h.advance(25000);await h.loop.tick();assert.equal(h.calls(),2);
   h.advance(119999);await h.loop.tick();assert.equal(h.calls(),2);
-  h.advance(1);await h.loop.tick();assert.equal(h.calls(),3);
-  h.data.signature='done';h.data.hasWork=false;h.advance(30000);await h.loop.tick();assert.equal(h.calls(),4);
-  h.advance(1e8);await h.loop.tick();assert.equal(h.calls(),4);assert.equal(h.state.nextRoundAt,null);
+  h.advance(1);await h.loop.tick();assert.equal(h.calls(),2);
+  h.data.signature='done';h.data.hasWork=false;h.advance(30000);await h.loop.tick();assert.equal(h.calls(),3);
+  h.advance(1e8);await h.loop.tick();assert.equal(h.calls(),3);assert.equal(h.state.nextRoundAt,null);
 });
 test('pause, restart intent, in-flight exclusion and stale completion cannot restart a stopped loop',async()=>{
   let resolve,rounds=0;
