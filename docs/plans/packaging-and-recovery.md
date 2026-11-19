@@ -8,6 +8,8 @@ Sources: [packager](../../scripts/package-desktop.mjs), [installer](../../script
 
 Public-page acceptance additionally covers the local demo's session/state transitions, direct example-terminal input, view-only limits, parent/worktree navigation, canvas interactions, installation-copy fallback and narrow layouts under the production CSP. The [website fixture](../../test/website.test.mjs) exercises these without provider requests. Website-only changes do not require rebuilding or replacing the desktop app.
 
+CSS and JavaScript asset references include content hashes in their query strings. Verify the exact URLs referenced by public HTML after deployment; immutable origin directories alone do not invalidate a CDN's unversioned asset cache. The website fixture rejects stale asset hashes.
+
 ## P1 — One-copy installation and rollback acceptance
 
 **Current behavior/gap.** Installation stages a replacement, checks the existing bundle identity and running app, renames the replacement into place, moves the old bundle to Trash, and removes the generated app copy. A failed replacement rename restores the old app. If moving the old bundle to Trash fails, its staging directory remains to preserve recoverability. The `0.7.0` installation passed strict deep signature, 60-file/runtime identity and four-session tmux preservation checks; generated output was consumed. [Installer fixtures](../../test/installer.test.mjs) now cover missing/wrong builds, unrelated/running apps, copy, replacement, rollback, Trash and cleanup failures; failures identify the installed path and retained recovery artifacts.

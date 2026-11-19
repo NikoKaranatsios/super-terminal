@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { createHash } from 'node:crypto';
 
 const website=fileURLToPath(new URL('../website/',import.meta.url));
 const assets=['index.html','styles.css','site.js','favicon.svg','robots.txt','sitemap.xml'];
@@ -41,6 +42,10 @@ test('public demo supports session decisions, graph navigation and installation 
       const ids=await page.locator('[id]').evaluateAll(nodes=>nodes.map(n=>n.id));
       assert.equal(new Set(ids).size,ids.length);
       assert.deepEqual(await page.locator('a[href^="#"]').evaluateAll(nodes=>nodes.map(n=>n.hash).filter(hash=>!document.getElementById(hash.slice(1)))),[]);
+      for(const [name,selector,attribute] of [['styles.css','link[rel="stylesheet"]','href'],['site.js','script[src]','src']]){
+        const hash=createHash('sha256').update(await fs.readFile(path.join(website,name))).digest('hex').slice(0,12);
+        assert.equal(await page.locator(selector).getAttribute(attribute),'/'+name+'?v='+hash,'public asset URL must change with its content');
+      }
     });
     await t.test('reply changes the question and counts without a model request',async()=>{
       await page.locator('[data-filter="question"]').click();

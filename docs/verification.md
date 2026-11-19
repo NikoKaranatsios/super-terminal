@@ -10,6 +10,8 @@ The interactive website uses invented content and performs no provider or shell 
 
 Axe-core reports zero tested WCAG A/AA violations for wide/narrow and filtered/unfiltered states. This is not full accessibility certification. The fixture reports no external requests or script/CSP errors. These website checks do not certify the desktop app; see the separate canvas and native-runtime evidence below.
 
+Public asset checks exposed cached CSS/JavaScript from the prior page. Content-hashed query strings now select the matching assets; the browser fixture checks those hashes against file bytes. Deployment verification fetches the exact stylesheet/script URLs in public HTML in addition to comparing all six files at the origin.
+
 ## Isolated-team runtime verification
 
 This source extension implements the owner-selected [isolated-team contract](plans/isolated-teams.md). The starting working tree already contained other changes; its 265-test baseline passed and was preserved before this work. The installed personal app and conflicting legacy/Markdown stores were left unchanged. No commit, push, personal provider login or model call was made for these checks.

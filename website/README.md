@@ -58,6 +58,10 @@ SSH settings, credentials and workspace records out of the web root.
 Use an immutable release directory and retain the current release/configuration
 for rollback. Switch the current symlink atomically and recreate only the
 dedicated static page container. Check container health, all six origin hashes,
-HTTPS content/security headers and exact CSS/JS/favicon/sitemap bytes. Confirm
+HTTPS content/security headers and exact CSS/JS/favicon/sitemap bytes. CSS and
+JavaScript URLs include the first 12 SHA-256 hex characters of their contents.
+Refresh these query values after asset edits and verify the URLs referenced by
+the deployed HTML; an unversioned CDN cache entry can retain a previous asset.
+The browser fixture checks that each asset URL matches its current content. Confirm
 that /api/state, /.env and /README.md return 404. Cloudflare may add managed
 content to HTML and robots.txt; compare original HTML at the origin.
