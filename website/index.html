@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101311">
+  <title>Super Terminal — A home for your agent terminals</title>
+  <meta name="description" content="Bring Codex, Claude, and Grok into one local desktop workspace. Keep your native terminals, coordinate with Conductor, and connect to your SSH environments.">
+  <meta property="og:title" content="Super Terminal — Your agents. One workspace.">
+  <meta property="og:description" content="A local desktop home for your agent terminals, with one Conductor chat. Explore the project and build it on macOS.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://super-terminal.romagnolo.eu/">
+  <link rel="canonical" href="https://super-terminal.romagnolo.eu/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="brand" href="/" aria-label="Super Terminal home"><span class="brand-icon" aria-hidden="true">&gt;_</span><span>super terminal<span class="brand-period">.</span></span></a>
+    <nav aria-label="Main navigation">
+      <a href="#workspace">Workspace</a>
+      <a href="https://github.com/NikoKaranatsios/super-terminal#readme">Docs</a>
+      <a class="nav-source" href="https://github.com/NikoKaranatsios/super-terminal">GitHub <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.86c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.03a9.6 9.6 0 0 1 5 0c1.91-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.76c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg></a>
+    </nav>
+  </header>
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="eyebrow"><span class="prompt-symbol" aria-hidden="true">~/</span> A desktop home for your agent terminals</div>
+      <h1 id="hero-title">Your agents.<br><span>One workspace.</span></h1>
+      <p class="hero-copy">Codex, Claude, Grok. Local or over SSH.<br class="desktop-break"> Keep your terminals together, and the thread of your work intact.</p>
+      <div class="hero-actions"><a class="button primary" href="#get-started">Build on macOS</a><a class="button secondary" href="https://github.com/NikoKaranatsios/super-terminal">Explore the source</a></div>
+      <p class="hero-note">Local desktop app <span aria-hidden="true">/</span> Your existing CLI sign-ins</p>
+      <div class="workspace-demo" id="workspace" aria-label="Illustrative Super Terminal workspace">
+        <div class="window-bar"><span class="window-controls" aria-hidden="true"><i></i><i></i><i></i></span><span>super terminal</span><span class="window-environment">Local workspace</span></div>
+        <div class="demo-body">
+          <aside class="demo-sidebar" aria-label="Example agents">
+            <div class="sidebar-heading">EXAMPLE PROJECT</div><div class="project-name"><span aria-hidden="true">▱</span> orbit</div>
+            <div class="agent-options">
+              <button type="button" class="agent-option selected" data-agent="codex" aria-pressed="true"><span class="agent-mark" aria-hidden="true">C</span><span><strong>Codex</strong><small>Implementation</small></span></button>
+              <button type="button" class="agent-option" data-agent="claude" aria-pressed="false"><span class="agent-mark claude" aria-hidden="true">✳</span><span><strong>Claude</strong><small>Code review</small></span></button>
+              <button type="button" class="agent-option" data-agent="grok" aria-pressed="false"><span class="agent-mark grok" aria-hidden="true">G</span><span><strong>Grok</strong><small>Exploration</small></span></button>
+            </div>
+            <div class="sidebar-bottom"><span aria-hidden="true">⌘</span> Same tools. More context.</div>
+          </aside>
+          <div class="demo-main">
+            <div class="demo-tabs" role="tablist" aria-label="Workspace preview">
+              <button id="tab-terminal" type="button" class="demo-tab active" role="tab" aria-selected="true" aria-controls="panel-terminal" tabindex="0"><span aria-hidden="true">&gt;_</span> Terminal</button>
+              <button id="tab-conductor" type="button" class="demo-tab" role="tab" aria-selected="false" aria-controls="panel-conductor" tabindex="-1"><span aria-hidden="true">✳</span> Conductor</button>
+              <span class="demo-path">~/projects/orbit</span>
+            </div>
+            <div id="panel-terminal" class="terminal-panel" role="tabpanel" aria-labelledby="tab-terminal" tabindex="0">
+              <div class="terminal-session"><span class="terminal-provider" id="provider-name">Codex</span><span>orbit / implementation</span></div>
+              <div class="terminal-prompt"><span aria-hidden="true">›</span> <span id="example-prompt">Add keyboard navigation to the command menu.</span></div>
+              <div class="terminal-response" id="example-response"><p>I’ll check the menu and its existing tests.</p><div class="file-line"><span aria-hidden="true">│</span> src/command-menu.ts</div><div class="file-line"><span aria-hidden="true">│</span> tests/command-menu.test.ts</div><p class="terminal-result">Added focus movement and Escape to close.</p><p class="terminal-muted">The targeted keyboard tests pass.</p></div>
+              <div class="terminal-input" aria-hidden="true"><span>›</span><span class="cursor"></span></div>
+            </div>
+            <div id="panel-conductor" class="terminal-panel conductor-panel" role="tabpanel" aria-labelledby="tab-conductor" tabindex="0" hidden>
+              <div class="terminal-session"><span class="terminal-provider">Conductor</span><span>One conversation for your work</span></div>
+              <div class="terminal-prompt"><span aria-hidden="true">›</span> What did I leave unfinished in orbit?</div>
+              <div class="terminal-response"><p>The menu changes have a passing test report.</p><p>Claude’s review is still open. The shortcut behavior needs a final check in the app.</p><p class="terminal-result">You can pick up the review without reopening every terminal.</p></div>
+              <div class="terminal-input" aria-hidden="true"><span>›</span><span class="cursor"></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="demo-status"><span>tmux-backed terminals</span><span>Illustrative preview · no live connection</span></div>
+      </div>
+      <div class="preview-caption"><span>Try the agents and Conductor tabs above.</span><span>Built around the tools you already use.</span></div>
+    </section>
+
+    <section class="capabilities wrap" aria-labelledby="capabilities-title">
+      <div class="section-intro"><p class="eyebrow">Less window switching. More continuity.</p><h2 id="capabilities-title">A better place<br>to keep working.</h2><p>Your terminal is still your terminal. Super Terminal brings the surrounding work into view.</p></div>
+      <div class="feature-list">
+        <article><span class="feature-icon" aria-hidden="true">&gt;_</span><div><h3>Native terminals, familiar commands.</h3><p>Use your installed Codex, Claude, and Grok CLIs with their own formatting and sign-ins. Split the workspace into panels or open another window.</p></div></article>
+        <article><span class="feature-icon" aria-hidden="true">✳</span><div><h3>One chat to find the thread.</h3><p>Ask Conductor about unfinished work, start an agent, or put together a team. Conversation history and local memory help you pick up where you left off.</p></div></article>
+        <article><span class="feature-icon" aria-hidden="true">[ ]</span><div><h3>Local work. Remote reach.</h3><p>Switch between your machine and configured SSH environments. Attach to available tmux sessions and read supported agent histories in the same workspace.</p></div></article>
+      </div>
+    </section>
+
+    <section class="continuity wrap" aria-labelledby="continuity-title">
+      <div><p class="eyebrow">Built for work that continues</p><h2 id="continuity-title">Close the view.<br>Keep the session.</h2><p>tmux-backed terminals keep running when you close a panel or quit the app. Reopen Super Terminal and reconnect to your work.</p><p class="subtle">Your agent CLIs keep their existing permissions. Conductor uses your Codex sign-in; model requests send work context to that provider.</p></div>
+      <div class="session-diagram" aria-label="Super Terminal reconnects to persistent tmux sessions">
+        <div class="diagram-app"><span class="brand-icon" aria-hidden="true">&gt;_</span><strong>Super Terminal</strong><span>Open. Close. Reconnect.</span></div>
+        <div class="connection-lines" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="diagram-sessions"><span>Codex<small>tmux session</small></span><span>Claude<small>tmux session</small></span><span>Grok<small>tmux session</small></span></div>
+        <p>Processes persist until stopped or the machine restarts.</p>
+      </div>
+    </section>
+
+    <section class="getting-started wrap" id="get-started" aria-labelledby="get-started-title">
+      <div class="install-intro"><p class="eyebrow">Make yourself at home</p><h2 id="get-started-title">Build it.<br>Open it. Get to work.</h2><p>Super Terminal is available to build from source on macOS. Start with the public repository.</p><ul class="requirements"><li>macOS Ventura or later</li><li>Node.js 22.13+, npm, Python 3, and tmux</li><li>Your preferred agent CLIs, installed and signed in</li></ul><a class="text-link" href="https://github.com/NikoKaranatsios/super-terminal#desktop-app">Read the installation documentation</a></div>
+      <div class="install-panel"><div class="install-heading"><span>Terminal · macOS</span><button type="button" class="copy-button" id="copy-install" hidden>Copy commands</button></div><pre><code id="install-commands">git clone https://github.com/NikoKaranatsios/super-terminal.git
+cd super-terminal
+brew install tmux
+npm install
+npm run install:desktop
+open "$HOME/Applications/Super Terminal.app"</code></pre><p>Source build · No prebuilt release is published.<br>The macOS app is ad hoc signed, not notarized.</p><span id="copy-status" class="sr-only" role="status"></span></div>
+    </section>
+
+    <section class="project-info wrap" aria-labelledby="project-title"><div><p class="eyebrow">An independent project on Romagnolo</p><h2 id="project-title">Look under the hood.</h2><p>Explore the code, read the implementation notes, or open an issue with a reproducible bug.</p><p class="license-note">The source repository is public. An open-source license has not yet been specified.</p></div><div class="project-links"><a class="button secondary" href="https://github.com/NikoKaranatsios/super-terminal">View on GitHub</a><a class="text-link" href="https://github.com/NikoKaranatsios/super-terminal/issues">Report an issue</a></div></section>
+  </main>
+  <footer class="site-footer wrap"><a class="brand" href="/">super terminal<span class="brand-period">.</span></a><span>A local home for your agent terminals.</span><a href="https://romagnolo.eu">Part of Romagnolo</a></footer>
+</body>
+</html>
