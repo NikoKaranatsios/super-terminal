@@ -1,14 +1,14 @@
 # Browsers and runtime isolation
 
-Status: profile isolation is implemented; B1 lifecycle acceptance and B2 boundary verification remain open. Stronger execution isolation is a decision, not an implemented feature.
+Status: B1 host-profile behavior remains implemented. B2 now includes owner-selected container execution with an in-container browser; see [isolated teams](isolated-teams.md) for the access contract, persistence, UI and outstanding provider/SSH/runsc acceptance.
 
 Sources: [browser manager](../../server/browsers.mjs), [helper](../../server/bridge.py), [startup instructions](../../server/agent-platform.mjs), [agent endpoint](../../server/index.mjs), [browser integration checks](../../test/integration.test.mjs).
 
 ## B1 — Browser lifecycle and concurrent commands
 
-**Current behavior/gap.** A managed agent gets a headless persistent Chromium profile keyed by session ID. Browser creation is deduplicated by a pending promise. Commands use the current page; newly opened pages replace that pointer. There is no per-agent command queue or tab-selection tool. Closing during a pending launch and session cleanup are not covered by existing tests. A new managed resume receives a new session ID/profile rather than necessarily reusing the previous browser state.
+**Implemented.** Each managed ID owns a headless persistent profile and a command queue. Separate agents remain independent. Close waits for pending launch/commands; page/context loss and popups update the usable page. Missing executables produce an actionable error. Profiles are retained after stop; a fresh managed ID gets a separate profile. Remote screenshot bytes were verified on both approved servers. Queue/page/close fixtures and real browser profile/redirect/URL-boundary integration pass.
 
-**Implementation.**
+**Implementation contract.**
 
 - Define serialization and cancellation for commands within one agent while keeping separate agents independent. Handle a page or context closing during a command, popups, and context-launch failure.
 - Coordinate browser close with pending creation so cleanup cannot return while an untracked browser is still starting. Use T3's shared lifecycle primitives for stop/removal/failed launch.
@@ -20,16 +20,12 @@ Sources: [browser manager](../../server/browsers.mjs), [helper](../../server/bri
 
 **Acceptance.** Concurrent agents retain separate cookies/storage. Overlapping commands for one agent have deterministic outcomes. Closing/removing an agent leaves no unintentionally running context, including pending launches. Missing browser/page errors are readable. Remote screenshots are usable from the remote agent without opening personal tabs.
 
-## B2 — Isolation boundary and optional stronger execution
+## B2 — Owner-selected execution boundary
 
-**Current boundary.** Browser profiles are separate from personal profiles. Browsers are headless, reject downloads, block service workers, and block requests to the service's control port. Opening a page accepts HTTP(S). These controls do not isolate an agent's shell, filesystem, repository, network, or same-user secrets. Remote agents still execute their CLI on the selected SSH machine, while their platform browser executes locally.
+Host mode keeps the existing browser-profile boundary: headless persistent profiles, downloads/service workers disabled, HTTP(S)-only opening and control-service rejection, including redirects and WebSockets. It does not isolate the host shell or same-user files. Remote host-mode browsers run on the local service machine.
 
-**Work.**
+The owner selected stronger isolation. Container teams now use a private volume and Chromium browser per agent, an internal team network, restricted/offline egress, explicit resource limits and a scoped stdio bridge. Existing host agents are not migrated. Docker and native Electron checks are recorded separately in [verification](../verification.md#isolated-team-runtime-verification).
 
-- Add regression checks for profile separation, attempted control-page navigation/redirects, unsupported URL schemes, popup behavior, and credential separation between browser and management APIs.
-- Keep prompts and help text precise about the boundary. Do not call the whole agent a sandbox or promise that browser profile separation prevents arbitrary shell access.
-- If stronger isolation is selected, document a concrete threat boundary and required filesystem/network/tool access before choosing a container or OS mechanism. Identify how CLI logins, repositories, SSH, and isolated browsers would work without requiring broad permissions or personal browser state.
+The [isolated-team plan](isolated-teams.md) is the implementation contract for B2 and T4. It identifies the shared-kernel boundary, provider sign-in, retained files, export, helper authority and remaining acceptance. No browser-profile claim substitutes for an OS boundary, and Linux browser checks do not establish native macOS behavior.
 
-**Dependencies.** B1 supplies reliable context cleanup; T2/T3 supply bridge/token boundaries. OS isolation has no implementation commitment without a defined user need.
-
-**Acceptance.** Tests demonstrate the existing browser/API boundary without touching personal profiles. Documentation distinguishes process location, profile isolation, and filesystem permissions. Any stronger sandbox implementation must have explicit access rules and tests; until then the limitation remains visible.
+Redirect routing alone does not cover later hops; see [Playwright redirect semantics](https://playwright.dev/docs/network#redirects). Actual Chromium tests cover multi-hop redirects, popup navigation and control WebSockets, including the server-side marker rejection.

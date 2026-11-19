@@ -10,7 +10,7 @@ const paths=await packager({
   dir:'.',name:'Super Terminal',executableName:'Super Terminal',out:'release',overwrite:true,
   platform:process.platform,arch:process.arch,asar:false,prune:true,
   appBundleId:'com.nikokaranatsios.super-terminal',appCategoryType:'public.app-category.developer-tools',
-  icon,ignore:[/^\/(?:\.git|release|build-assets|test|scripts)(?:\/|$)/,/^\/Start Super Terminal\.command$/,/\.map$/],
+  icon,ignore:[/^\/(?:\.git|\.local|\.worktrees|release|build-assets|test|scripts)(?:\/|$)/,/^\/Start Super Terminal\.command$/,/\.map$/],
   extendInfo:{NSHighResolutionCapable:true}
 });
 for(const output of paths){

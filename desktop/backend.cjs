@@ -1,8 +1,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
+const { buildIdentity } = require('../shared/build-identity.cjs');
 
-async function probeBackend(origin, dataDir) {
+async function probeBackend(origin, dataDir, expectedBuild=buildIdentity(path.resolve(__dirname,'..'))) {
   let response;
   try {
     response = await fetch(origin + '/desktop-health', { signal: AbortSignal.timeout(1500) });
@@ -13,7 +14,7 @@ async function probeBackend(origin, dataDir) {
   let value;
   try { value = await response.json(); } catch {}
   const dataKey = createHash('sha256').update(path.resolve(dataDir)).digest('hex');
-  if (!response.ok || value?.product !== 'super-terminal' || value.protocol !== 1 || value.dataKey !== dataKey) {
+  if (!response.ok || value?.product !== 'super-terminal' || value.protocol !== 2 || value.dataKey !== dataKey || value.buildId !== expectedBuild) {
     throw new Error(`Port ${new URL(origin).port} is occupied by another service or an older Super Terminal version. Stop that service before reopening this app. Your agent terminals can keep running.`);
   }
   return value;
@@ -21,7 +22,8 @@ async function probeBackend(origin, dataDir) {
 
 async function startBackend({ utilityProcess, root, port, dataDir, env, onExit }) {
   const origin = `http://127.0.0.1:${port}`;
-  if (await probeBackend(origin, dataDir)) return { origin, owned: false, stop: async () => {} };
+  const expectedBuild=buildIdentity(root);
+  if (await probeBackend(origin, dataDir, expectedBuild)) return { origin, owned: false, stop: async () => {} };
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(dataDir, 'desktop-service.log');
   if (fs.existsSync(logPath) && fs.statSync(logPath).size > 2 * 1024 * 1024) fs.renameSync(logPath, logPath + '.previous');
@@ -48,7 +50,7 @@ async function startBackend({ utilityProcess, root, port, dataDir, env, onExit }
       }
       child.on('exit', exited); child.on('message', message);
     });
-    await probeBackend(origin, dataDir);
+    await probeBackend(origin, dataDir, expectedBuild);
     ready = true;
   } catch (error) { expectedExit = true; child.kill(); throw error; }
   return {

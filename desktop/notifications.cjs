@@ -15,7 +15,7 @@ function watchActivity({ origin, deliver, fetcher = fetch, interval = 3000 }) {
       const { events, enabled } = await response.json();
       if (stopped) return;
       for (const event of events) {
-        if (initialized && !seen.has(event.id) && enabled) deliver(event);
+        if (initialized && !seen.has(event.id) && enabled && event.kind === 'conductor' && event.notify === true) deliver(event);
         seen.add(event.id);
       }
       initialized = true;

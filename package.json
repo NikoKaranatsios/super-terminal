@@ -1,6 +1,6 @@
 {
   "name": "super-terminal",
-  "version": "0.4.1",
+  "version": "0.11.0",
   "productName": "Super Terminal",
   "main": "desktop/main.cjs",
   "private": true,
@@ -13,22 +13,39 @@
     "build": "node build.mjs",
     "start": "electron .",
     "start:web": "node server/index.mjs",
+    "mcp": "node server/mcp.mjs",
+    "enroll": "node server/enroll-cli.mjs",
+    "recovery:inspect": "node scripts/inspect-workspace-recovery.mjs",
+    "recovery:plan": "node scripts/recover-workspace.mjs preview",
+    "recovery:apply": "node scripts/recover-workspace.mjs apply",
     "dev": "npm run build && npm start",
     "test": "node --test test/*.test.mjs",
     "test:desktop": "node scripts/test-desktop.mjs",
     "package:desktop": "npm run build && node scripts/package-desktop.mjs",
-    "install:desktop": "npm run package:desktop && node scripts/install-desktop.mjs"
+    "install:desktop": "npm run package:desktop && node scripts/install-desktop.mjs",
+    "test:native": "node scripts/test-native-ui.mjs",
+    "test:environments": "node scripts/test-approved-environments.mjs --approved-environments",
+    "build:sandbox": "node scripts/build-sandbox.mjs",
+    "test:sandbox": "node scripts/test-sandbox.mjs && node scripts/test-sandbox-api.mjs",
+    "test:sandbox:native": "node scripts/test-sandbox-native.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "express": "^5.1.0",
+    "highlight.js": "^11.12.0",
+    "markdown-it": "^15.0.3",
+    "markdown-it-mark": "^4.0.0",
+    "markdown-it-task-lists": "^2.1.1",
     "node-pty": "^1.1.0",
     "playwright": "^1.64.1",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@electron/packager": "^20.3.0",
+    "@modelcontextprotocol/client": "2.3.1",
     "electron": "^44.9.2",
     "esbuild": "^0.25.0"
   }

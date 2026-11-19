@@ -36,17 +36,36 @@ test('shell quoting keeps shell metacharacters literal', async () => {
   }
 });
 test('SSH host validation rejects command and option injection', () => {
-  assert.equal(validHost('user@192.0.2.157'), 'user@192.0.2.157');
-  for (const host of ['-oProxyCommand=bad', 'host;bad', 'host\nbad', 'user@host bad', 'host/other', '']) assert.throws(() => validHost(host));
+  assert.equal(validHost('user@192.0.2.10'), 'user@192.0.2.10');
+  for (const host of ['-oProxyCommand=bad', '-Fprivate@host', '-luser@host', 'host;bad', 'host\nbad', 'user@host bad', 'host/other', '']) assert.throws(() => validHost(host));
 });
 test('state persists, and malformed state is not overwritten', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'super-terminal-store-'));
   try {
-    const store = createStore(dir); store.state.hosts.push('host'); store.save();
-    assert.deepEqual(createStore(dir).state.hosts, ['host']);
-    fs.writeFileSync(path.join(dir, 'state.json'), 'broken');
-    assert.throws(() => createStore(dir));
-    assert.equal(fs.readFileSync(path.join(dir, 'state.json'), 'utf8'), 'broken');
+    const store = createStore(dir); store.state.hosts.push('host'); store.state.projects=[{id:'p',name:'Example',host:'local',cwd:'/example',notes:'Keep this note'}]; store.save();
+    const reloaded = createStore(dir);
+    assert.deepEqual(reloaded.state.hosts, ['host']);
+    assert.equal(reloaded.state.projects[0].notes, 'Keep this note');
+    assert.equal(fs.existsSync(path.join(dir, 'state.json')), false);
+    assert.match(fs.readFileSync(path.join(dir, 'workspaces', 'local', 'projects', 'p.md'), 'utf8'), /Keep this note/);
+    assert.equal(reloaded.state.directories.local, path.join(dir, 'workspaces', 'local'));
+    const remote = path.join(dir, 'remote-directory');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'directories.json'), JSON.stringify({ local: path.join(dir, 'workspaces', 'local'), remote }));
+    store.state.hosts.push('remote'); store.state.projects.push({ id:'r', name:'Remote', host:'remote', notes:'Remote note' }); store.save();
+    assert.match(fs.readFileSync(path.join(remote, 'projects', 'r.md'), 'utf8'), /Remote note/);
+    assert.equal(createStore(dir).state.directories.remote, remote);
+    const runtime = path.join(dir, 'runtime', 'runtime.json');
+    const saved = fs.readFileSync(runtime, 'utf8');
+    fs.writeFileSync(runtime, 'broken');
+    assert.throws(() => createStore(dir), /left untouched/);
+    assert.equal(fs.readFileSync(runtime, 'utf8'), 'broken');
+    fs.writeFileSync(runtime, saved);
+    const legacy = fs.mkdtempSync(path.join(os.tmpdir(), 'super-terminal-legacy-'));
+    fs.writeFileSync(path.join(legacy, 'state.json'), 'broken');
+    assert.throws(() => createStore(legacy), /left untouched/);
+    assert.equal(fs.readFileSync(path.join(legacy, 'state.json'), 'utf8'), 'broken');
+    fs.rmSync(legacy, { recursive: true, force: true });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 test('transcripts ignore tool output and partial JSONL writes', () => {

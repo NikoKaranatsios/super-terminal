@@ -5,6 +5,9 @@ dist/
 .env
 .env.*
 .super-terminal/
+.grok/
 release/
 build-assets/
 __pycache__/
+/.local/
+/.worktrees/

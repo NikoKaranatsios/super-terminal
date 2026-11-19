@@ -1,11 +1,14 @@
-const { app, BrowserWindow, Menu, dialog, nativeTheme, screen, utilityProcess, ipcMain, Notification } = require('electron');
+const { app, BrowserWindow, Menu, dialog, nativeTheme, screen, utilityProcess, ipcMain, Notification, shell } = require('electron');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { execFile } = require('node:child_process');
-const { startBackend } = require('./backend.cjs');
+const { superviseBackend } = require('./service-owner.cjs');
 const { watchActivity } = require('./notifications.cjs');
+const { deliverNotification } = require('./notification-delivery.cjs');
+const {saveRuntimePatch}=require('./export-patch.cjs');
+const { webLink } = require('../shared/web-links.cjs');
 
 const root = path.resolve(__dirname, '..');
 const dataDir = process.env.SUPER_TERMINAL_DATA || path.join(os.homedir(), '.super-terminal');
@@ -52,16 +55,9 @@ async function sendAction(action) {
   window.show(); window.focus(); window.webContents.send('desktop-action', action);
 }
 function notify(event) {
-  if (!Notification.isSupported()) return false;
-  const notification = new Notification({ title: event.kind === 'test' ? 'Super Terminal notifications' : `${event.provider} ${event.kind === 'finished' ? 'finished a response' : 'exited'}`, body: event.kind === 'test' ? 'Agent completion alerts will appear here.' : `${event.title}\n${event.host === 'local' ? 'Local' : event.host}`, silent: false });
-  notifications.add(notification);
-  notification.on('click', () => {
-    if (!currentWindow()) createWindow({ view: event.target || 'activity', environment: event.host || 'local' });
-    else sendAction(event.target ? { type: 'show-agent', id: event.target, host: event.host } : 'activity');
-  });
-  const release = () => notifications.delete(notification);
-  notification.on('close', release); notification.on('failed', release);
-  notification.show(); return true;
+  return deliverNotification({Notification,retain:notifications,
+    options:{ title: event.kind === 'test' ? 'Super Terminal notifications' : event.title || 'Conductor', body: event.kind === 'test' ? 'Conductor will choose which updates need your attention.' : event.text || '', silent: false },
+    onClick:async()=>{if(!currentWindow())await createWindow({view:'activity',environment:event.host || 'local',notification:event.id || ''});else await sendAction({type:'show-notification',event});}});
 }
 function trusted(event) {
   const window = BrowserWindow.fromWebContents(event.sender);
@@ -73,7 +69,7 @@ function setMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(isMac ? [{ label: 'Super Terminal', submenu: [{ role: 'about' }, { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => sendAction('settings') }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] }] : []),
     { label: 'File', submenu: [
-      { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => createWindow({ window: randomUUID(), view: 'conductor' }) },
+      { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => createWindow({ window: randomUUID(), view: 'session-graph' }) },
       { label: 'New Terminal Tab', accelerator: 'CmdOrCtrl+T', click: () => sendAction('new-terminal') },
       { label: 'New Agent', submenu: ['codex', 'claude', 'grok'].map(provider => ({ label: provider, click: () => sendAction('new-agent:' + provider) })) },
       { type: 'separator' }, { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: () => sendAction('close-tab') },
@@ -86,8 +82,10 @@ function setMenu() {
       { label: 'Split Below', accelerator: 'CmdOrCtrl+Shift+D', click: () => sendAction('split-below') },
       { label: 'Next Panel', accelerator: 'CmdOrCtrl+]', click: () => sendAction('next-panel') },
       { type: 'separator' },
-      { label: 'Conductor', accelerator: 'CmdOrCtrl+1', click: () => sendAction('conductor') },
-      { label: 'Select Environment', accelerator: 'CmdOrCtrl+2', click: () => sendAction('environment') },
+      { label: 'Sessions', accelerator: 'CmdOrCtrl+2', click: () => sendAction('sessions') },
+      { label: 'Conductor', click: () => sendAction('conductor') },
+      { label: 'Agent Graph', accelerator: 'CmdOrCtrl+1', click: () => sendAction('session-graph') },
+      { label: 'Select Environment', accelerator: 'CmdOrCtrl+Shift+E', click: () => sendAction('environment') },
       { label: 'Activity', accelerator: 'CmdOrCtrl+3', click: () => sendAction('activity') },
       { type: 'separator' }, { role: 'reload' }, { role: 'toggleDevTools' },
       { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }
@@ -145,17 +143,25 @@ if (primary) app.whenReady().then(async () => {
   app.setAboutPanelOptions({ applicationName: 'Super Terminal', applicationVersion: app.getVersion(), copyright: 'Local agent workspace' });
   try {
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('PORT must be an integer between 1024 and 65535.');
-    backend = await startBackend({ utilityProcess, root, port, dataDir, env: await loginEnvironment(), onExit: async () => {
-      if (quitting) return;
-      const result = await dialog.showMessageBox(currentWindow(), { type: 'error', message: 'The local service stopped.', detail: 'Your tmux terminals are still running. Restart Super Terminal to reconnect.', buttons: ['Restart app', 'Quit'] });
-      if (result.response === 0) app.relaunch();
-      app.quit();
-    } });
+    backend=superviseBackend({utilityProcess,root,port,dataDir,env:await loginEnvironment()},{
+      onRecovered:()=>{for(const window of windows)if(!window.isDestroyed())window.webContents.send('desktop-action',{type:'backend-reconnected'});},
+      onFailure:async error=>{if(quitting)return;const result=await dialog.showMessageBox(currentWindow(),{type:'error',message:'The local service could not recover.',detail:error.message+' Your tmux terminals and drafts are preserved.',buttons:['Restart app','Keep window open']});if(result.response===0){app.relaunch();app.quit();}}
+    });
+    await backend.start();
     ipcMain.on('desktop-open-window', (event, context) => {
       if (!trusted(event) || typeof context?.viewId !== 'string' || context.viewId.length > 600 || typeof context.environment !== 'string' || context.environment.length > 300) return;
       createWindow({ window: randomUUID(), view: context.viewId, environment: context.environment });
     });
     ipcMain.handle('desktop-test-notification', event => trusted(event) && notify({ kind: 'test' }));
+    ipcMain.handle('desktop-save-runtime-patch',async(event,input)=>{
+      if(!trusted(event))throw new Error('Only the local application can export runtime changes.');
+      return saveRuntimePatch(input||{},{choose:options=>dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender),options)});
+    });
+    ipcMain.handle('desktop-open-link', async (event, value) => {
+      const url = webLink(value);
+      if (!trusted(event) || !url) return false;
+      await shell.openExternal(url); return true;
+    });
     watcher = watchActivity({ origin: backend.origin, deliver: notify });
     setMenu(); await createWindow();
   } catch (error) { dialog.showErrorBox('Super Terminal could not start', error.message); app.quit(); }

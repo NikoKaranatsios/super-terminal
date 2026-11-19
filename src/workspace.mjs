@@ -16,6 +16,16 @@ export class Workspace {
   nodes(node=this.root){return node.axis?[node,...this.nodes(node.first),...this.nodes(node.second)]:[node];}
   current(){return this.panes().find(p=>p.id===this.activePane)||this.panes()[0];}
   open(viewId){const pane=this.panes().find(p=>p.tabs.includes(viewId))||this.current();if(!pane.tabs.includes(viewId))pane.tabs.push(viewId);pane.active=viewId;this.activePane=pane.id;return pane;}
+  openBeside(anchorId,viewId,axis='row'){
+    const anchor=this.open(anchorId);
+    if(anchorId===viewId)return anchor;
+    const existing=this.panes().find(p=>p.tabs.includes(viewId));
+    if(existing&&existing!==anchor)return this.open(viewId);
+    let target=this.panes().find(p=>p!==anchor);
+    if(!target)target=this.split(axis);
+    if(existing===anchor)anchor.tabs=anchor.tabs.filter(id=>id!==viewId);
+    this.focus(target.id);return this.open(viewId);
+  }
   focus(paneId){if(this.panes().some(p=>p.id===paneId))this.activePane=paneId;return this.current();}
   split(axis='row'){
     if(!['row','column'].includes(axis))throw new Error('Invalid split direction.');
@@ -27,7 +37,7 @@ export class Workspace {
   resize(nodeId,ratio){const node=this.nodes().find(n=>n.id===nodeId);if(node?.axis&&Number.isFinite(ratio))node.ratio=Math.max(.15,Math.min(.85,ratio));}
   close(viewId){
     const pane=this.panes().find(p=>p.tabs.includes(viewId));if(!pane)return;
-    pane.tabs=pane.tabs.filter(t=>t!==viewId);if(pane.active===viewId)pane.active=pane.tabs.at(-1)||null;
+    const index=pane.tabs.indexOf(viewId);pane.tabs=pane.tabs.filter(t=>t!==viewId);if(pane.active===viewId)pane.active=pane.tabs[Math.min(index,pane.tabs.length-1)]||null;
     if(!pane.tabs.length)this.removeEmpty(pane.id);
   }
   removeEmpty(paneId){

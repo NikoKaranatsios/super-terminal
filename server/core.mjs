@@ -4,6 +4,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
+import { createWorkspaceStore } from './markdown-store.mjs';
 
 export const run = promisify(execFile);
 export const home = os.homedir();
@@ -30,7 +31,7 @@ export function text(value, max = 200) {
   return value.trim();
 }
 export function validHost(value) {
-  if (typeof value !== 'string' || value.length > 200 || !/^(?:[a-zA-Z0-9_.-]+@)?[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(value)) throw new Error('Use an SSH alias or user@hostname (configure ports in ~/.ssh/config).');
+  if (typeof value !== 'string' || value.length > 200 || !/^(?:[a-zA-Z0-9_][a-zA-Z0-9_.-]*@)?[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(value)) throw new Error('Use an SSH alias or user@hostname (configure ports in ~/.ssh/config).');
   return value;
 }
 export function localDirectory(value = home) {
@@ -56,23 +57,9 @@ export function ensureContext(group) {
   if (!fs.existsSync(file)) fs.writeFileSync(file, `# ${group}\n\nShared context for this group. Add decisions, useful paths, and handoff notes here.\n`, { mode: 0o600 });
   return file;
 }
-export function createStore(root = dataDir) {
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const file = path.join(root, 'state.json');
-  let state = { sessions: [], hosts: [] };
-  if (fs.existsSync(file)) {
-    // Fail visibly instead of overwriting damaged user state.
-    state = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (!Array.isArray(state.sessions) || !Array.isArray(state.hosts)) throw new Error('Invalid state.json');
-  }
-  return {
-    state,
-    save() {
-      const tmp = file + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
-      fs.renameSync(tmp, file);
-    }
-  };
+export function createStore(root = dataDir, {io=fs}={}) {
+  io.mkdirSync(root, { recursive: true, mode: 0o700 });
+  return createWorkspaceStore(root, io);
 }
 export async function tmuxRun(args, targetSocket = socket) {
   if (!tmux) throw new Error('tmux is required. Install it with: brew install tmux');

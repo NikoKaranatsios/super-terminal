@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 const electron=createRequire(import.meta.url)('electron');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'super-terminal-desktop-'));
 const listener=net.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));const port=listener.address().port;await new Promise(r=>listener.close(r));
-const child=spawn(electron,['test/desktop-runtime.cjs'],{stdio:'inherit',env:{...process.env,ELECTRON_RUN_AS_NODE:'',SUPER_TERMINAL_DATA:dir,SUPER_TERMINAL_SOCKET:'super-terminal-desktop-'+port,SUPER_TERMINAL_TEST:'1',PORT:String(port)}});
+const child=spawn(electron,['test/desktop-runtime.cjs'],{stdio:'inherit',env:{...process.env,ELECTRON_RUN_AS_NODE:'',SUPER_TERMINAL_DATA:dir,SUPER_TERMINAL_SOCKET:'super-terminal-desktop-'+port,SUPER_TERMINAL_TEST:'1',CODEX_HOME:path.join(dir,'provider-codex'),CLAUDE_CONFIG_DIR:path.join(dir,'provider-claude'),GROK_HOME:path.join(dir,'provider-grok'),PORT:String(port)}});
 const timer=setTimeout(()=>{child.kill('SIGKILL');console.error('Desktop test timed out.');},60000);
 const code=await new Promise((resolve,reject)=>{child.on('exit',resolve);child.on('error',reject);});clearTimeout(timer);
 if(code===0)fs.rmSync(dir,{recursive:true,force:true});else console.error('Diagnostic logs:',dir);

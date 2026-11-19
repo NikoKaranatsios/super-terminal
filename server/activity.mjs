@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { readRecords } from './history.mjs';
 
 // Explicit end-of-turn records only: commentary and tool calls are not completion.
@@ -28,6 +28,16 @@ export class ActivityMonitor {
     events.push({ id: randomUUID(), key, kind, at: new Date().toISOString(), target: source.historyId || source.id, host: source.host, provider: source.provider, title: String(source.role || source.title || source.provider).slice(0, 180) });
     this.store.state.activity = events.slice(-200); this.store.save();
   }
+  notify({ title, text, target = 'conductor', host = 'local', historyId=null }) {
+    if (typeof title !== 'string' || !title.trim() || title.length > 200 || typeof text !== 'string' || !text.trim() || text.length > 2000) throw new Error('A notification needs a short title and message.');
+    const key = 'conductor:' + createHash('sha256').update(JSON.stringify([title, text, target])).digest('hex');
+    const existing = this.store.state.activity.find(e => e.key === key);
+    if (existing) return { ...existing, duplicate: true };
+    const event = { id: randomUUID(), key, kind: 'conductor', notify: true, at: new Date().toISOString(), target, host, historyId, provider: 'conductor', title, text };
+    this.store.state.activity.push(event);
+    this.store.state.activity = this.store.state.activity.slice(-200);
+    this.store.save(); return event;
+  }
   histories(host, rows) {
     const baseline = !this.baselines.has(host);
     for (const row of rows) {
@@ -52,10 +62,10 @@ export class ActivityMonitor {
   processes(host, rows, healthy = true) {
     // A lost SSH connection is not evidence that the remote agent exited.
     if (!healthy) { this.live.delete(host); return; }
-    const agents = rows.filter(s => s.host === host && !s.runtime && ['codex','claude','grok'].includes(s.provider) && ['running','external','paused'].includes(s.status));
+    const agents = rows.filter(s => s.host === host && s.kind !== 'enrolled' && !s.runtime && ['codex','claude','grok'].includes(s.provider) && ['running','external','paused'].includes(s.status));
     const previous = this.live.get(host);
     // Linux start time is inferred from integer elapsed seconds and can drift by <1s.
-    const sameRun = (a, b) => a?.provider === b.provider && a?.pid === b.pid && (a?.startedAt === b.startedAt || Math.abs(Date.parse(a?.startedAt) - Date.parse(b.startedAt)) < 2000);
+    const sameRun = (a,b) => {if(a?.provider!==b.provider||a?.pid!==b.pid)return false;const first=a?.processStartIdentity || a?.serverIdentity,second=b.processStartIdentity || b.serverIdentity;if(first&&second)return first===second;return a?.startedAt===b.startedAt || !a?.startedAt || !b.startedAt || Math.abs(Date.parse(a.startedAt)-Date.parse(b.startedAt))<2000;};
     if (previous) for (const old of previous.values()) if (!agents.some(s => s.id === old.id && sameRun(old, s))) {
       const current = rows.find(s => s.id === old.id);
       if (current?.connectionLost || current?.status === 'disconnected') continue;

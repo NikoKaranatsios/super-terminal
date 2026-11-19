@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { text, home } from './core.mjs';
+import fs from 'node:fs';
+import { text, home, validHost, localDirectory } from './core.mjs';
 
 export function parseTopics(value, histories = []) {
   if (typeof value !== 'string' || value.length > 20000) throw new Error('Topics must be text, up to 20,000 characters.');
@@ -11,8 +12,10 @@ export function parseTopics(value, histories = []) {
     const title = text(separator > 0 ? line.slice(separator + 2) : line, 800);
     let project = projects.find(p => p.name.toLowerCase() === name.toLowerCase());
     if (!project) {
-      const known = histories.find(h => h.group.toLowerCase() === name.toLowerCase());
-      project = { id: randomUUID(), name, cwd: known?.repository || known?.cwd || path.join(home, 'Projects'), host: 'local', goals: [] };
+      const matches = histories.filter(h => h.group?.toLowerCase() === name.toLowerCase());
+      const locations = new Set(matches.map(h => `${h.host || 'local'}\0${h.repository || h.cwd}`));
+      const known = locations.size === 1 ? matches[0] : null;
+      project = { id: randomUUID(), name, cwd: known?.repository || known?.cwd || path.join(home, 'Projects'), host: known?.host || 'local', ...(known?.owner ? { owner: known.owner } : {}), goals: [] };
       projects.push(project);
     }
     if (title) project.goals.push({ id: randomUUID(), title, status: 'todo', notes: '' });
@@ -27,7 +30,7 @@ export function resolveScope(workSessions, input) {
   if (!input) return null;
   const session = workSessions.find(s => s.id === input.workSessionId);
   if (!session) throw new Error('Working session not found.');
-  const project = input.projectId ? session.projects.find(p => p.id === input.projectId) : null;
+  const project = input.projectId ? session.projects.find(p => p.id === input.projectId || p.canonicalProjectId === input.projectId) : null;
   if (input.projectId && !project) throw new Error('Project not found in this working session.');
   const goal = input.goalId ? project?.goals.find(g => g.id === input.goalId) : null;
   if (input.goalId && !goal) throw new Error('Goal not found in this project.');
@@ -40,24 +43,61 @@ export function scopeContext(workSessions, scope) {
   const projects = scope.projectId ? session.projects.filter(p => p.id === scope.projectId) : session.projects;
   return {
     workingSession: session.title, layer: scope.goalId ? 'goal/task' : scope.projectId ? 'project' : 'working session',
-    projects: projects.map(p => ({ id: p.id, name: p.name, cwd: p.cwd, goals: p.goals.filter(g => !scope.goalId || g.id === scope.goalId).map(g => ({ id: g.id, title: g.title, status: g.status, notes: g.notes })) }))
+    projects: projects.map(p => ({ id: p.id, projectId: p.canonicalProjectId || null, name: p.name, host: p.host || 'local', cwd: p.cwd, goals: p.goals.filter(g => !scope.goalId || g.id === scope.goalId).map(g => ({ id: g.id, title: g.title, status: g.status, notes: g.notes })) }))
   };
 }
 export function canCommunicate(a, b) {
-  return a.group === b.group || !!(a.scope?.workSessionId && a.scope.workSessionId === b.scope?.workSessionId);
+  return !!(a.teamId && a.teamId === b.teamId);
 }
 export function carryProjects(previous) {
-  return previous.projects.map(p => ({ ...p, id: randomUUID(), goals: p.goals.filter(g => g.status !== 'done').map(g => ({ ...g, id: randomUUID(), status: 'todo' })) })).filter(p => p.goals.length);
+  return previous.projects.map(p => ({ ...p, id: randomUUID(), goals: p.goals.filter(g => g.status !== 'done').map(g => ({ ...g, id: randomUUID(), taskId: undefined, revision: undefined, carriedFromGoalId: g.id, status: ['blocked', 'stopped'].includes(g.status) ? g.status : 'todo' })) })).filter(p => p.goals.length);
 }
 export function mergeProjects(carried, added) {
   for (const project of added) {
-    const existing = carried.find(p => p.name.toLowerCase() === project.name.toLowerCase());
+    const existing = carried.find(p => p.name.toLowerCase() === project.name.toLowerCase() && p.host === project.host && p.cwd === project.cwd);
     if (existing) existing.goals.push(...project.goals);
     else carried.push(project);
   }
   return carried;
 }
-export function wrapSummary(session) {
+
+/** Resolve location before launch, using canonical projects and legacy scopes consistently. */
+export function resolveLaunchLocation(state, input = {}, allowedHosts = []) {
+  const task = input.taskId ? state.tasks?.find(t => t.id === input.taskId) : null;
+  if (input.taskId && !task) throw new Error('Task not found.');
+  const team = input.teamId ? state.teams?.find(t => t.id === input.teamId) : null;
+  if (input.teamId && !team) throw new Error('Team not found.');
+  const suppliedScope = input.scope || (input.workSessionId ? { workSessionId: input.workSessionId, projectId: input.projectId || null, goalId: input.goalId || null } : null);
+  const scope = resolveScope(state.workSessions || [], suppliedScope || task?.scope || team?.scope);
+  if (task?.scope && scope && (scope.workSessionId !== task.scope.workSessionId || (scope.projectId && scope.projectId !== task.scope.projectId) || (scope.goalId && scope.goalId !== task.id && scope.goalId !== task.scope.goalId))) throw new Error('Task conflicts with the selected scope.');
+  const scopedProject = state.workSessions?.find(s => s.id === scope?.workSessionId)?.projects.find(p => p.id === scope?.projectId);
+  const requestedProject = input.projectId ? state.projects?.find(p => p.id === input.projectId) : null;
+  if (input.projectId && !requestedProject && input.projectId !== scopedProject?.id) throw new Error('Project not found.');
+  const selectedId = requestedProject?.id || task?.projectId || scopedProject?.canonicalProjectId || team?.projectId || null;
+  const project = state.projects?.find(p => p.id === selectedId);
+  if (task?.projectId && selectedId !== task.projectId) throw new Error('Task conflicts with the selected project.');
+  if (scopedProject?.canonicalProjectId && selectedId && selectedId !== scopedProject.canonicalProjectId) throw new Error('Project conflicts with the working-session scope.');
+  if (team?.projectId && selectedId && selectedId !== team.projectId) throw new Error('Team conflicts with the selected project.');
+  const configured = scopedProject || project || team;
+  const host = input.host || configured?.host || 'local';
+  if (host !== 'local' && !allowedHosts.includes(validHost(host))) throw new Error('Environment is not enabled.');
+  if (configured?.host && input.host && input.host !== configured.host) throw new Error('Environment conflicts with the selected project or scope.');
+  const cwd = input.cwd || configured?.cwd || (host === 'local' ? path.join(home, 'Projects') : '~');
+  if (input.cwd && configured?.cwd) {
+    const base = host === 'local' ? fs.realpathSync(localDirectory(configured.cwd)) : path.posix.normalize(configured.cwd);
+    const candidate = host === 'local' ? fs.realpathSync(localDirectory(cwd)) : path.posix.normalize(cwd);
+    const relative = (host === 'local' ? path : path.posix).relative(base, candidate);
+    if (relative === '..' || relative.startsWith('../') || path.isAbsolute(relative)) throw new Error('Working directory is outside the selected project or scope.');
+  }
+  return { host, cwd: host === 'local' ? localDirectory(cwd) : text(cwd, 2000), projectId: selectedId, scope, taskId: task?.id || null, teamId: team?.id || null };
+}
+export function wrapSummary(session,{state={},live=[]}={}) {
   const progress = workProgress(session);
-  return `${session.title}\n${progress.done}/${progress.total} goals completed. ${progress.open} left open.\n\n${session.projects.map(p => `${p.name}\n${p.goals.map(g => `${g.status === 'done' ? '[x]' : g.status === 'doing' ? '[~]' : '[ ]'} ${g.title}${g.notes ? ` — ${g.notes}` : ''}`).join('\n')}`).join('\n\n')}${session.notes ? `\n\nHandoff for next time\n${session.notes}` : ''}`;
+  const ids=new Set(session.projects.flatMap(p=>p.goals.map(g=>g.id)));
+  const tasks=(state.tasks || []).filter(t=>ids.has(t.id));
+  const assigned=(state.sessions || []).filter(a=>a.scope?.workSessionId===session.id || tasks.some(t=>t.agentId===a.id));
+  const reports=(state.messages || []).filter(m=>assigned.some(a=>a.id===m.from)&&['conductor','coordinator'].includes(m.to)).slice(-8);
+  const evidence=tasks.flatMap(t=>(t.evidence || []).slice(-2).map(e=>`${t.title}: ${e.summary} (reported by ${typeof e.actor==='string'?e.actor:JSON.stringify(e.actor || 'unknown')})`));
+  const missing=tasks.filter(t=>t.status==='done'&&!t.evidence?.length).map(t=>t.title);
+  return `${session.title}\n${progress.done}/${progress.total} goals reported complete. ${progress.open} left open. These are recorded claims; the platform has not rerun tests.\n\n${session.projects.map(p => `${p.name}\n${p.goals.map(g => `${g.status === 'done' ? '[x]' : g.status === 'doing' ? '[~]' : '[ ]'} ${g.title} (${g.status})${g.notes ? ` — ${g.notes}` : ''}`).join('\n')}`).join('\n\n')}${evidence.length?'\n\nRecorded evidence\n'+evidence.join('\n'):''}${missing.length?'\n\nCompletion evidence missing: '+missing.join(', '):''}${reports.length?'\n\nRecent agent reports — retain any conflicts with the recorded task state\n'+reports.map(m=>`${m.from} → ${m.to}: ${m.text.slice(0,800)}`).join('\n'):''}${assigned.length?'\n\nProcess observations (independent of task completion)\n'+assigned.map(a=>`${a.title || a.id}: ${live.find(s=>s.id===a.id)?.status || 'unavailable'}`).join('\n'):''}${session.notes ? `\n\nHandoff for next time\n${session.notes}` : ''}`;
 }

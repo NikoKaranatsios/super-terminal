@@ -1,14 +1,24 @@
 # Super Terminal
 
-A local desktop collection of your terminals, with one Conductor chat. No board or dashboard.
+A local desktop collection of your terminals, with continuous Conductor coordination and a compact view of work across projects.
 
-[Implementation status](docs/implementation-status.md) · [Remaining implementation plans](docs/plans/README.md) · [Architecture and operations](docs/README.md) · [Verification](docs/verification.md)
+**Current source version: 0.11.0.** [Public project page](https://super-terminal.romagnolo.eu/). Build from source using the instructions below; no prebuilt installer is published. The repository is public, but a project-wide open-source license has not yet been specified.
 
-Choose **Local**, **157**, or **Romagnolo 91** from the environment selector. The list refreshes automatically, including Codex, Claude, and Grok processes started outside the app. Click a terminal to use its original CLI; click an external agent to read its matched saved conversation. Provider background services are labelled separately from individual agents.
+[Implementation status](docs/implementation-status.md) · [Implementation record](docs/implementation.md) · [Supporting plans](docs/plans/README.md) · [Architecture and operations](docs/README.md) · [Verification](docs/verification.md)
+
+**Graph** is the main workspace. Agents are grouped by project across Local and configured SSH environments. A node canvas connects projects to agents and their subagents. Compact provider nodes show model, work state, branch and question/activity previews. Drag nodes to arrange them, pan and zoom, use the minimap, or choose **Fit** and **Tidy up**. **Details** opens full questions, paths, observation age, reports and task progress in an inspector. Click a node to open its existing terminal alongside the graph. Worktree and subfolder sessions share their repository project, with branch and actual location retained. Activity badges distinguish working, explicit input requests, questions detected in replies, blockers, recently finished turns, idle and unknown activity. Filter by attention or work state; search models, branches and tasks. Known managed and native subagents connect to their parent sessions; saved child output is labelled separately from live terminals.
+
+**Sessions** provides a compact alternative list. Rows identify project, current task or conversation, provider, recorded model, location, terminal and state. Search by project, model or terminal; filter an environment without losing your open tabs. Unknown/disconnected sources remain explicitly unverified. Process state is separate from task progress.
+
+Select an interactive session and type directly into its original CLI. There is no extra input bar. **New terminal** starts Codex, Claude, Grok or a shell in the chosen environment and directory. Tabs, split panes and additional windows attach to existing sessions; closing a view or quitting the app preserves their processes.
+
+Ordinary external processes started outside tmux are view only: matched saved output is readable, but their screen and keyboard cannot safely be transplanted. Provider metadata supplies model labels without model calls; missing identities are labelled unknown. Discovery covers readable configured accounts and supported sockets, not every possible process.
+
+**More** contains Conductor, System graph, projects, teams, messages, working-session controls, saved conversations, services and settings. Projects retain their task squares, tables and details; human work-session controls remain separate from process controls. Each concrete environment keeps its own working directory and Markdown work records. The all-environments session filter does not merge project context or Conductor conversations.
 
 ## Conductor
 
-Conductor remembers your conversation and can ask about priorities and uncertain progress. It reads provider histories, caches assessments, and separates unfinished work from completed, uncertain, stale, and unreviewed conversations. The conversation list includes unreviewed history instead of pretending it has all been assessed.
+Conductor remembers the conversation for the selected environment and can retrieve earlier direct exchanges and saved project histories even when their agents have exited. Focusing a project, task, or agent does not lock the conversation to that project. Agent-facing instructions use an isolated internal project dispatch, so you can coordinate across projects in the environment without forwarding unrelated context. It can ask about priorities and uncertain progress. It reads provider histories, caches assessments, and separates unfinished work from completed, uncertain, stale, and unreviewed conversations. The conversation list includes unreviewed history instead of pretending it has all been assessed.
 
 Ask it naturally, for example:
 
@@ -21,11 +31,23 @@ Ask it naturally, for example:
 - “Start a working session with these topics.”
 - “Wrap up this session and carry unfinished goals into the next one.”
 
-Actions run through a small validated platform API. Conductor sees the actual result before replying and reports partial failures. It can start/resume agents, start teams, queue agent messages, manage project records and assignments, start/pause/wrap human working sessions, update goals, pause/resume/stop processes, search history, and clean up stopped terminal entries. Cleanup preserves provider conversations and project files. Conductor does not have an arbitrary shell or authority to delete project files.
+Actions run through a small validated platform API. Conductor sees the actual result before replying and reports partial failures. It can start/resume agents, start teams, queue agent messages, manage project records and assignments, start/pause/wrap human working sessions, update goals, pause/resume/stop processes, search history, and clean up stopped terminal entries. Cleanup preserves provider conversations and project files. Platform cleanup does not delete project files. Direct chat also has native shell and file tools under the selected access setting.
 
-**Team messages** shows the agents’ mailbox conversations, including sender, recipient, team, and delivery state. New agents receive peer/mailbox instructions and the team mission automatically. Messages are queued, not injected as keystrokes; agents check their inbox at milestones. External agents can be tracked and assigned but do not gain a mailbox or startup instructions retroactively.
+**Team messages** shows the agents’ mailbox conversations, including sender, recipient, team, and queued, fetched or explicitly acknowledged delivery state. Acknowledgment is not proof of completed work. New agents receive peer/mailbox instructions and the team mission automatically. Messages are queued, not injected as keystrokes; agents check their inbox at milestones. External agents can be tracked and assigned but do not gain a mailbox or startup instructions retroactively.
 
-Conductor uses the installed Codex CLI login with GPT-6-Luna, low reasoning, compact instructions, no plugins or shell tools. The first briefing is automatic by default; subsequent model calls happen only when you ask. Each review reads a bounded batch of recent conversation excerpts, rotating across locations. Assessments and chat memory persist locally. “Review more history” continues with the next batch. History indexing and process refreshes themselves use no model calls.
+Conductor uses the installed Codex CLI and login. Direct chat supports shell commands, file edits, configured integrations and installed skills. Its header shows the model and file access; expand it to save model, reasoning, file access and skill preferences separately for the selected working session. With no working session, chat has its own settings and works immediately. Empty model/reasoning fields use CLI defaults. Use the skill picker or mention $name. Each turn records its effective configuration, and changes apply to the next message. Full file access is the default; workspace-write and read-only are selectable. These file permissions are distinct from platform project-context checks. Its continuous loop collects structured work without model calls, then makes bounded decision rounds for relevant changes and unfinished authorized work. It listens without paid idle rounds when there is no eligible work. Run, pause and stop controls show the loop state and next round. Errors back off; only one reply runs at once. Context has a byte cap, and usage is summed across model rounds. The optional first history briefing remains read-only. “Review more history” reads another bounded batch.
+
+Conductor can name, start, pause, stop, assign and prompt managed agents; create and update tasks/goals; create teams, add missing members and brief them; and manage human sessions. Continuous rounds are restricted to active assignments. Prompts are queued in cooperative agent mailboxes, with delivery shown honestly; they do not answer CLI approval prompts. Replies render Markdown and code, with tool activity under **Working details** and visible partial failures. Output follows the newest text by default; scroll up to read, use **Jump to latest** to return, or enable **Pin to bottom** to keep the latest output visible. Reply/code copy controls preserve the original text.
+
+## Isolated teams and helpers
+
+In **Teams**, check runtime availability and prepare the image, or run `npm run build:sandbox` with Docker running. Then ask Conductor: “Create an isolated team for this project with a Codex implementer and a Claude reviewer. Enable helpers, allow four active agents, twelve total launches and depth one.” Team configuration stays in chat.
+
+Each agent starts at committed `HEAD` with a private Linux checkout, home and browser. Sign in inside its terminal; host logins and uncommitted edits are not copied. Teams shows access, resource limits and helper relationships. **Runtime & browser** opens controls, source details, an actual browser preview and **Export changes**. Export produces a patch to review; it does not apply or merge it.
+
+Closing the app preserves running containers. Stop releases containers and team services while retaining workspaces, provider homes and browser profiles. Export remains available after stop. Agents request helpers through `st_request_helper`; inherited scope, concurrent capacity, cumulative launches and depth are enforced. Failed and uncertain requests remain visible. Provider-internal workers and billing are not separately capped by this helper allowance.
+
+Docker is the supported local baseline; optional `runsc` must already be installed. SSH Docker and authenticated provider flows still require environment-specific acceptance. The default image includes Codex and Claude; Grok needs a compatible custom image. See [isolation, persistence and remaining acceptance](docs/plans/isolated-teams.md) and [actual checks](docs/verification.md#isolated-team-runtime-verification). These changes are in source; the installed personal app still needs its separate workspace recovery before upgrade.
 
 ## Desktop app
 
@@ -45,8 +67,9 @@ The installed app bundles its own Electron/Node runtime and starts its loopback 
 | ⌘D / ⇧⌘D | Split right / below |
 | ⌘] | Focus next panel |
 | ⌘W / ⇧⌘W | Close tab / window |
-| ⌘1 | Conductor |
-| ⌘2 | Environment selector |
+| ⌘1 | Agent graph |
+| ⌘2 | Sessions |
+| ⇧⌘E | Environment selector |
 | ⌘3 | Activity |
 | ⌘, | Settings |
 
@@ -54,9 +77,9 @@ The installed app bundles its own Electron/Node runtime and starts its loopback 
 
 Use **Split Right** or **Split Below** to display up to six panels per window. Click a panel and select an agent from the sidebar. Drag the sidebar or panel dividers to resize; double-click a panel divider to return to equal sizes. Focused dividers also respond to arrow keys. Tab selection and split proportions survive a reload and restore in the main window when reopening. **New Window** in the toolbar opens the selected conversation in a separate desktop window. Closing a tab detaches the screen without stopping its agent.
 
-Completion notifications are on by default. Alerts target their conversation when available; **Activity** retains the latest 200 events across all locations. Explicit successful end-of-turn log records trigger “finished a response”; disappearing agent processes trigger a separate “exited” alert. This does not certify that a project or task is complete. Old history and SSH outages do not trigger alerts. Detection uses periodic process/history scans, makes no AI calls, and continues with windows closed while the app runs. Providers without readable completion records can only be detected when the process exits. macOS notification permissions and Focus control banners and sound; Settings includes a test button. Native banner/click acceptance and unavailable-target handling remain in the [notification plan](docs/plans/desktop-and-notifications.md).
+Conductor chooses which updates deserve native notifications. Raw response completions and process exits remain in **Activity**, alongside its notification decisions; a completed response does not certify that a task is done. Notifications are deduplicated and honor Settings. The watcher is shared across windows and continues while the app runs with windows closed. macOS permissions and Focus still control banners and sound; Settings includes a test button. Native banner/click acceptance remains in the [notification plan](docs/plans/desktop-and-notifications.md).
 
-Closing the window keeps the app running on macOS. Quitting stops an app-owned local service, its browser tools and active Conductor request; a separately started compatible service reused by the app is left running. tmux terminals survive service shutdown and can reconnect when the app reopens. Rebooting ends processes but preserves conversation histories and app data.
+Closing the window keeps the app running on macOS. Quitting stops an app-owned local service, its host browser tools and active Conductor request; isolated containers and their browsers remain running. a separately started compatible service reused by the app is left running. tmux terminals survive service shutdown and can reconnect when the app reopens. Rebooting ends processes but preserves conversation histories and app data.
 
 Runtime requirements: macOS Ventura or later, tmux, Python 3, and the agent CLIs you use, with their existing sign-ins. Building requires Node 22.13+ and npm. The macOS bundle is ad hoc signed for personal use, not notarized for public distribution.
 
@@ -64,11 +87,11 @@ Runtime requirements: macOS Ventura or later, tmux, Python 3, and the agent CLIs
 
 Only destinations in `~/.super-terminal/connections.json` are enabled. The personal installation contains the two requested servers. Hostnames and credentials are not committed. `connections.example.json` shows the format for a fresh installation. SSH uses existing keys and normal host-key verification; ports and jumps belong in `~/.ssh/config`.
 
-Local processes, remote processes, and history indexes refresh independently. Failed SSH scans remove stale processes from the live list while retaining in-memory history metadata; that remote cache does not survive a service restart. Zombie processes are excluded. Process existence does not mean an agent is currently doing work. Discovery is limited to visible processes, supported history formats, and the tmux sockets the readers inspect; see [coverage and remaining work](docs/plans/discovery-and-history.md).
+Local processes, remote processes, and history indexes refresh independently. Failed or partial scans disclose source health and retain usable evidence without false exit events. A versioned minimal remote history index survives restart as stale metadata, never as proof of a live process. Local filesystem readers have a deadline and run outside the service event loop. Zombie processes are excluded. Process existence does not mean an agent is currently doing work. Discovery is limited to visible processes, supported history formats, and the tmux sockets the readers inspect; see [coverage and remaining work](docs/plans/discovery-and-history.md).
 
 Remote discovery is read-only. If the SSH account already permits passwordless sudo, the reader uses that existing permission to inspect root-owned provider histories and histories belonging to discovered agent accounts. It never enables sudo, requests passwords, or changes permissions. Without that access it reads what the SSH account can access. Root-owned tmux panes can be attached using the same existing sudo permission. Resumed conversations retain their original server user.
 
-Provider history readers support Codex SQLite/JSONL, Claude project JSONL, and Grok session summaries/JSONL. They read bounded text excerpts, omit tool output, tolerate partial writes, and never modify provider history. Codex indexing includes up to 2,000 unarchived threads per account.
+Provider history readers support Codex SQLite/JSONL, Claude project JSONL, and Grok session summaries/JSONL. Saved-output views include available messages, commentary, tool calls and results. Load earlier output without replacing the recent tail; readers preserve record boundaries, tolerate partial writes, and never modify provider history. Reads are bounded, with an explicit notice for an individual record over 8 MiB. Internal/encrypted reasoning and unlogged output are unavailable. Codex indexing includes up to 2,000 unarchived threads per account.
 
 External conversations are linked using a resume ID, an open transcript file, or a unique provider/folder/start-time match (labelled in the view). Ambiguous same-folder conversations are offered as candidates, not asserted to belong to a process. A shared Codex runtime may have several open conversations. An inaccessible or unlogged conversation cannot be reconstructed.
 
@@ -76,9 +99,9 @@ Ordinary terminal processes started outside the app cannot have their live scree
 
 ## Agent communication and browsers
 
-Managed agents receive a private Python helper and session-scoped credential. Same-group agents or agents in the same human working session can exchange messages and progress. Remote agents connect through a loopback-only reverse SSH tunnel. Their credentials cannot control arbitrary terminals or call Conductor’s management API.
+Managed agents receive a private Python helper and session-scoped credential. Only explicit team membership permits peer context sharing; equal names, folders or human working sessions do not. Remote agents connect through a loopback-only reverse SSH tunnel. **Reconnect remote** restores the existing managed remote terminal and helper without launching another provider. Their credentials cannot control arbitrary terminals or call Conductor’s management API.
 
-The helper exposes `peers`, `inbox`, `send`, `context`, `progress`, and `browser` commands. Startup instructions include the full command path. Each agent browser owns its own persistent profile, cookies, and storage, separate from your personal browser tabs. Browser instances start on demand. This isolates browser state, not the filesystem; CLI permissions and approval mechanisms remain in effect.
+The helper exposes mailbox/context commands, scoped task creation and reports, legacy goal progress, and browser tools. A private outbox retains structured updates for retry. Agents report meaningful changes with short notes and completion evidence; collection needs no model or repeated document parsing. Implementation files can be linked as evidence, but private task state is kept outside repositories. Each agent browser owns its own persistent profile, cookies, and storage, separate from personal tabs. This isolates browser state, not the filesystem; CLI permissions and approval mechanisms remain in effect.
 
 ## Local data and development
 
@@ -89,7 +112,9 @@ The renderer is sandboxed with no Node integration or arbitrary navigation. The 
 ```sh
 npm run dev              # desktop development
 npm test                 # isolated backend tests; no model calls or SSH scans
-npm run test:desktop     # bundled Node/native PTY/persistence check
+npm run test:desktop     # bundled runtime, crash recovery and tmux persistence
+npm run test:native      # isolated native windows/output/clipboard checks
+npm run test:environments # opt-in disposable checks on both approved SSH servers
 npm run package:desktop  # build into release/
 ```
 

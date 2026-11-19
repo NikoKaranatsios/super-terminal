@@ -1,9 +1,10 @@
 # Engineering documentation
 
-This documents the implementation at source baseline `6726db5` (package `0.4.1`) and the work still needed. The audit is based on repository code and existing verification evidence. It is not a claim that every provider, SSH account, or native desktop path has been exercised.
+This documents current behavior and the remaining implementation and acceptance work. The audit is based on repository code and existing verification evidence. It is not a claim that every provider, SSH account, or native desktop path has been exercised.
 
 | Document | Purpose |
 | --- | --- |
+| [Execution document](implementation.md) | Ordered work, review findings and completion evidence |
 | [Implementation status](implementation-status.md) | Requirements, current behavior, gaps, and resolved error |
 | [Architecture](architecture.md) | Processes, data, APIs, and trust boundaries |
 | [Implementation plans](plans/README.md) | Remaining changes with dependencies and acceptance criteria |

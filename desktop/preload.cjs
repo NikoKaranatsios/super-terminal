@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('superTerminalDesktop', {
   platform: process.platform,
   openWindow(context) { ipcRenderer.send('desktop-open-window', context); },
   testNotification() { return ipcRenderer.invoke('desktop-test-notification'); },
+  saveRuntimePatch(id, patch) { return ipcRenderer.invoke('desktop-save-runtime-patch', { id, patch }); },
+  openLink(url) { return ipcRenderer.invoke('desktop-open-link', url); },
   onAction(callback) {
     const listener = (_event, action) => callback(action);
     ipcRenderer.on('desktop-action', listener);

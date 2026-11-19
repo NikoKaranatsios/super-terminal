@@ -3,11 +3,16 @@ const assert=require('node:assert/strict');
 const path=require('node:path');
 const {WebSocket}=require('ws');
 const {startBackend}=require('../desktop/backend.cjs');
+const {superviseBackend}=require('../desktop/service-owner.cjs');
 app.setPath('userData',path.join(process.env.SUPER_TERMINAL_DATA,'desktop-test'));
 app.whenReady().then(async()=>{
   let backend,terminalId,headers,base;
   try{
-    backend=await startBackend({utilityProcess,root:path.resolve(__dirname,'..'),port:Number(process.env.PORT),dataDir:process.env.SUPER_TERMINAL_DATA,env:process.env});
+    let ownedChild,recovered;
+    const recovery=new Promise(resolve=>recovered=resolve);
+    const trackedUtility={fork(...args){ownedChild=utilityProcess.fork(...args);return ownedChild;}};
+    backend=superviseBackend({utilityProcess:trackedUtility,root:path.resolve(__dirname,'..'),port:Number(process.env.PORT),dataDir:process.env.SUPER_TERMINAL_DATA,env:process.env},{onRecovered:recovered});
+    await backend.start();
     assert.equal(backend.owned,true);base=backend.origin;
     const html=await(await fetch(base)).text();headers={'x-super-terminal':html.match(/name="super-terminal-token" content="([^"]+)"/)[1],'content-type':'application/json'};
     const api=async(url,method='GET',body)=>{const r=await fetch(base+'/api'+url,{method,headers,body:body?JSON.stringify(body):undefined});const data=await r.json();assert.equal(r.status,200,JSON.stringify(data));return data;};
@@ -20,13 +25,17 @@ app.whenReady().then(async()=>{
     });
     const reused=await startBackend({utilityProcess,root:path.resolve(__dirname,'..'),port:Number(process.env.PORT),dataDir:process.env.SUPER_TERMINAL_DATA,env:process.env});
     assert.equal(reused.owned,false);await reused.stop();assert.ok(await fetch(base+'/desktop-health'));
+    const oldToken=headers['x-super-terminal'];ownedChild.kill();
+    await Promise.race([recovery,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Owned service did not recover')),15000))]);
+    const recoveredHtml=await(await fetch(base)).text();headers['x-super-terminal']=recoveredHtml.match(/name="super-terminal-token" content="([^"]+)"/)[1];
+    assert.notEqual(headers['x-super-terminal'],oldToken);assert.equal((await api('/state')).sessions.find(s=>s.id===terminalId).status,'running');
     await backend.stop();
     backend=await startBackend({utilityProcess,root:path.resolve(__dirname,'..'),port:Number(process.env.PORT),dataDir:process.env.SUPER_TERMINAL_DATA,env:process.env});
     const again=await(await fetch(base)).text();headers['x-super-terminal']=again.match(/name="super-terminal-token" content="([^"]+)"/)[1];
     const state=await api('/state');assert.equal(state.sessions.find(s=>s.id===terminalId).status,'running');
     await api('/sessions/'+terminalId,'DELETE');terminalId=null;
     await backend.stop();backend=null;
-    console.log('Desktop runtime passed: bundled Node, SQLite history, native PTY, service reuse, clean shutdown, and tmux survival across restart.');
+    console.log('Desktop runtime passed: bundled Node, SQLite history, native PTY, exact-build reuse, owned-service crash recovery, token rotation, clean shutdown, and tmux survival across restart.');
     app.exit(0);
   }catch(error){
     console.error(error);

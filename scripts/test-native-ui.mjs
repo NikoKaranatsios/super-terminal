@@ -1,0 +1,97 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import net from 'node:net';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {execFileSync} from 'node:child_process';
+import {_electron as electron} from 'playwright';
+const executablePath=createRequire(import.meta.url)('electron'),root=process.cwd();
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'st-native-ui-'));
+const socket='st-native-'+path.basename(dir);const listener=net.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));const port=listener.address().port;await new Promise(r=>listener.close(r));
+const env={...process.env,ELECTRON_RUN_AS_NODE:'',SUPER_TERMINAL_DATA:dir,SUPER_TERMINAL_SOCKET:socket,SUPER_TERMINAL_TEST:'1',CODEX_HOME:path.join(dir,'codex'),CLAUDE_CONFIG_DIR:path.join(dir,'claude'),GROK_HOME:path.join(dir,'grok'),PORT:String(port)};
+const answer='**Native window review.**\n\n'+Array.from({length:30},(_,i)=>`Paragraph ${i+1}: readable output stays separate from working details.`).join('\n\n')+'\n\n```sh\nprintf native\n```\n\nFinal reply line visible.';
+fs.writeFileSync(path.join(dir,'state.json'),JSON.stringify({sessions:[],hosts:[],preferences:{automaticBriefing:false,notifyOnFinish:false,fontSize:13},conductor:{loop:{state:'stopped'},turns:[{id:'fixture-turn',mode:'manual',status:'complete',prompt:'Inspect the native conversation layout.',answer,runtime:{model:'native-fixture',access:'full',skills:true},trace:[{name:'command_execution',command:'printf fixture',output:'fixture',exitCode:0}]}]}}));
+let app,token,terminalId;const errors=[];const base=`http://127.0.0.1:${port}`;
+const api=async(route,method='GET',body)=>{const response=await fetch(base+'/api'+route,{method,headers:{'x-super-terminal':token,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const result=await response.json();assert.equal(response.status,200,JSON.stringify(result));return result;};
+async function launch(){const instance=await electron.launch({executablePath,args:[root],cwd:root,env,timeout:30000});try{const page=await instance.firstWindow();page.setDefaultTimeout(12000);page.on('pageerror',error=>errors.push(error.message));await page.locator('#sessions-nav:not([disabled])').waitFor();await page.click('#management-menu>summary');await page.click('#conductor-nav');await page.locator('#chat-input').waitFor();token=await page.locator('meta[name=super-terminal-token]').getAttribute('content');return {instance,page};}catch(error){await instance.close().catch(()=>{});throw error;}}
+async function menu(instance,label){await instance.evaluate(({Menu},label)=>{function find(items){for(const item of items){if(item.label===label)return item;const child=item.submenu&&find(item.submenu.items);if(child)return child;}}const item=find(Menu.getApplicationMenu().items);if(!item)throw Error('Menu missing: '+label);item.click();},label);}
+try{
+  let launched=await launch();app=launched.instance;let page=launched.page;
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1150,820));
+  // Derive selectors from the rendered control contract, not OS coordinates.
+  const controls=page.locator('[data-view=conductor] .output-controls');assert.equal(await controls.count(),1);
+  await controls.getByRole('button',{name:/pin/i}).click();
+  assert.equal(await controls.getByRole('button',{name:/pin/i}).getAttribute('aria-pressed'),'true');
+  await page.locator('#chat-output [data-copy-message]').click();
+  await page.locator('#chat-output [data-copy-message]').filter({hasText:'Copied'}).waitFor();
+  assert.equal(await app.evaluate(({clipboard})=>clipboard.readText()),answer);
+  await page.fill('#chat-input','Native draft retained after quit');
+  await page.click('#sessions-home');await page.screenshot({path:'/tmp/super-terminal-sessions-native.png'});await page.click('#conductor-nav');
+  await page.screenshot({path:'/tmp/super-terminal-native-wide.png'});
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(800,500));
+  await page.locator('#conductor-settings summary').click();await page.fill('#chat-input','Line one\nLine two\nLine three\nLine four\nLine five');
+  await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+  await page.screenshot({path:'/tmp/super-terminal-native-minimum.png'});
+  const dimensions=await page.evaluate(()=>Object.fromEntries(['#send-chat','#chat-input','.output-controls'].map(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return [selector,{top:r.top,bottom:r.bottom,height:r.height,viewport:innerHeight}];})));
+  console.log('Minimum native window control geometry',JSON.stringify(dimensions));
+  const finalLine=await page.locator('#chat-output .console-answer .console-body p').last().boundingBox(),outputBox=await page.locator('#chat-output').boundingBox();assert.ok(finalLine.y<outputBox.y+outputBox.height&&finalLine.y+finalLine.height>outputBox.y,'Pinned last line is visible');
+  for(const [selector,r] of Object.entries(dimensions)){assert.ok(r.top>=0&&r.bottom<=r.viewport,selector+' must remain reachable');}
+  await page.locator('#conductor-settings summary').click();await page.fill('#chat-input','Native draft retained after quit');
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1150,820));
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(2));
+  await page.locator('#toggle-sidebar').waitFor();assert.equal(await page.locator('#sidebar').isVisible(),false);
+  await page.click('#toggle-sidebar');await page.click('#docs-nav');assert.equal(await page.locator('[data-view=docs]').isVisible(),true);assert.equal(await page.locator('#sidebar').isVisible(),false);
+  await page.locator('[data-tab=docs]').focus();await page.keyboard.press('Home');assert.equal(await page.evaluate(()=>document.activeElement.dataset.tab),'session-graph');
+  await page.screenshot({path:'/tmp/super-terminal-native-zoom.png'});
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1));
+  await page.click('#settings-nav');await page.click('#test-notification');
+  await page.waitForFunction(()=>document.querySelector('#notification-result')?.textContent);
+  console.log('Native notification test outcome:',await page.locator('#notification-result').textContent());
+  await page.click('#conductor-nav');
+  const terminal=await api('/sessions','POST',{provider:'shell',title:'Native fixture shell',cwd:dir});terminalId=terminal.id;
+  await page.reload();await page.locator('#sessions-nav:not([disabled])').waitFor();await page.click('#management-menu>summary');await page.click('#system-graph-nav');
+  await page.locator(`[data-graph-node="agent:${terminalId}"]`).click();
+  assert.match(await page.locator('.graph-inspector').innerText(),/Native fixture shell/);
+  assert.match(await page.locator('.graph-inspector').innerText(),/No structured progress report/);
+  await page.locator('[data-graph-node="mcp"]').click();assert.match(await page.locator('.graph-inspector').innerText(),/st_conductor/);
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(800,500));
+  await page.locator('.graph-inspector').scrollIntoViewIfNeeded();
+  assert.ok(await page.evaluate(()=>document.body.scrollWidth<=innerWidth),'Graph does not overflow the native window');
+  assert.ok(await page.locator('.graph-inspector').evaluate(el=>el.clientHeight>0),'Graph inspector remains reachable');
+  if(process.env.SUPER_TERMINAL_GRAPH_CAPTURE){fs.mkdirSync(process.env.SUPER_TERMINAL_GRAPH_CAPTURE,{recursive:true});await page.screenshot({path:path.join(process.env.SUPER_TERMINAL_GRAPH_CAPTURE,'system-graph-native.png')});}
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1150,820));
+  await menu(app,'Agent Graph');
+  await page.locator('.sg-agent-filter').click();
+  await page.locator(`[data-session-node="${terminalId}"]`).click();
+  assert.equal(await page.locator('[data-view=session-graph]').isVisible(),true,'Graph stays visible beside the chosen terminal');
+  assert.equal(await page.locator('.pane').count(),2,'One click opens the terminal alongside the graph');
+  await page.waitForFunction(id=>document.querySelector(`[data-view="${id}"] .connection`)?.textContent==='',terminalId);
+  assert.equal(await page.evaluate(()=>document.activeElement.matches('.xterm-helper-textarea')),true,'Opening a session focuses its terminal');
+  assert.equal(await page.locator('.agent-message').count(),0,'No extra session input bar');
+  await page.locator('.xterm-helper-textarea').pressSequentially("printf 'NATIVE_%s_OK\\n' input");await page.locator('.xterm-helper-textarea').press('Enter');
+  let captured='';for(let attempt=0;attempt<30;attempt++){captured=execFileSync('tmux',['-L',socket,'capture-pane','-p','-t',terminal.tmuxName],{encoding:'utf8'});if(captured.includes('NATIVE_input_OK'))break;await new Promise(r=>setTimeout(r,100));}assert.match(captured,/NATIVE_input_OK/);
+  await page.locator(`[data-session-node="${terminalId}"]`).click();
+  assert.equal(await page.locator('.pane').count(),2,'Reselecting a node reuses its terminal');
+  if(process.env.SUPER_TERMINAL_GRAPH_CAPTURE)await page.screenshot({path:path.join(process.env.SUPER_TERMINAL_GRAPH_CAPTURE,'agent-graph-native.png')});
+  const newWindow=app.waitForEvent('window');await page.click('#new-window');const second=await newWindow;second.on('pageerror',e=>errors.push(e.message));second.setDefaultTimeout(12000);await second.waitForFunction(id=>document.querySelector(`[data-view="${id}"] .connection`)?.textContent==='',terminalId);
+  assert.equal((await api('/state')).sessions.filter(s=>s.kind==='managed').length,1,'Second window attaches to the same process');
+  await app.evaluate(({BrowserWindow,app},url)=>{app.focus({steal:true});BrowserWindow.getAllWindows().find(w=>w.webContents.getURL()===url).focus();},second.url());
+  await menu(app,'Split Right');
+  const menuView=second;
+  await menuView.waitForFunction(()=>document.querySelectorAll('.pane').length===2);
+  await menu(app,'Conductor');await menuView.locator('#chat-input').waitFor();
+  await menuView.locator('[data-divider]').first().focus();await menuView.keyboard.press('ArrowLeft');
+  console.log('Native window state request',await app.evaluate(async({BrowserWindow},url)=>{const w=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL()===url);w.minimize();const minimized=w.isMinimized();w.restore();const event=new Promise(resolve=>{w.once('enter-full-screen',()=>resolve(true));setTimeout(()=>resolve(false),2000);});w.setFullScreen(true);const fullscreen=await event;w.setFullScreen(false);return {minimized,fullscreen};},menuView.url()));
+  await second.close();assert.equal((await api('/state')).sessions.find(s=>s.id===terminalId).status,'running');
+  await page.click('#conductor-nav');await page.fill('#chat-input','Native draft retained after quit');
+  await app.close();app=null;
+  assert.match(execFileSync('tmux',['-L',socket,'list-sessions','-F','#{session_name}'],{encoding:'utf8'}),/st-/);
+  launched=await launch();app=launched.instance;page=launched.page;
+  assert.equal(await page.inputValue('#chat-input'),'Native draft retained after quit');assert.equal(await page.locator('[data-view=conductor] .output-controls').getByRole('button',{name:/pin/i}).getAttribute('aria-pressed'),'true');
+  assert.equal((await api('/state')).sessions.find(s=>s.id===terminalId).status,'running');
+  await api('/sessions/'+terminalId,'DELETE');terminalId=null;await app.close();app=null;
+  assert.deepEqual(errors,[]);console.log('Native Electron acceptance passed: graph node opens and reuses an adjacent terminal, native PTY input, readable output, clipboard, minimum sizing, bottom pin, same-session windows, menu handlers, divider keyboard, draft/layout restoration and quit survival.');
+  fs.rmSync(dir,{recursive:true,force:true});
+}catch(error){console.error(error);console.error('Native diagnostics retained:',dir);process.exitCode=1;}
+finally{if(terminalId&&token)try{await api('/sessions/'+terminalId,'DELETE');}catch{}if(app)await app.close().catch(()=>{});try{execFileSync('tmux',['-L',socket,'kill-server'],{stdio:'ignore'});}catch{}}
