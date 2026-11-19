@@ -1,38 +1,63 @@
 # Public project page
 
-Buildless static introduction to Super Terminal. Serve this directory with any
-static HTTP server; no desktop dependencies or application service are needed.
+Buildless introduction and interactive simulation of the Super Terminal 0.11.0
+graph workspace. The page helps visitors evaluate the workflow, understand its
+limits and build the macOS app from source.
 
-```sh
+The demo contains five invented sessions across two fictional projects. It
+supports node selection with an adjacent terminal, observed-state filters,
+project/model/branch search, parent navigation, worktree inspection, node dragging,
+canvas panning, zoom/Fit and keyboard navigation. A reply in the example terminal
+changes a waiting agent to Working. Terminal commands are limited to a local
+simulation (help, status, clear); arbitrary text is never executed or sent.
+Drafts and output stay in page memory and are cleared by reset or reload.
+View-only sessions retain their attachment limit.
+
+The installation section supplies prerequisites, copyable source-build commands,
+first-run steps and SSH documentation. FAQ answers cover provider accounts,
+discovery limits, local data, platform support and the unspecified project license.
+No prebuilt installer or project-wide open-source license is implied.
+
+## Local preview and checks
+
+From the repository root:
+
+~~~sh
 python3 -m http.server 4389 --bind 127.0.0.1 --directory website
-```
+node --check website/site.js
+node --test test/website.test.mjs
+~~~
 
-The page describes the `0.11.0` desktop graph workspace. The workspace preview uses
-invented example content and makes no requests to agent providers. It supports
-graph-node and agent selection, keyboard-accessible preview tabs, and copying install commands
-where the browser supports the Clipboard API. Installation, documentation, and
-issue links point to the public repository; no prebuilt download is advertised.
-The page identifies the missing project license without granting a license.
+The browser fixture needs the repository's installed dependencies and Playwright
+Chromium. It serves only the public assets on an isolated loopback port under the
+production Content Security Policy. Optional SUPER_TERMINAL_WEBSITE_SCREENSHOTS
+selects a local capture directory; SUPER_TERMINAL_AXE_SOURCE selects an installed
+axe-core script for additional automated accessibility checks. These paths and
+captures are not public assets.
 
-Public files: `index.html`, `styles.css`, `site.js`, `favicon.svg`, `robots.txt`,
-and `sitemap.xml`. Deploy only these files. The application backend, SSH settings,
-provider credentials, workspace data, and development files are not web assets.
+Verified: question/reply state and count changes; per-session drafts; view-only
+output; filters/search and empty-state recovery; worktree/parent scenarios;
+dragging without accidental selection; panning/zoom/Fit; keyboard node selection
+and terminal focus; literal text handling; reset; copy success and denied-clipboard
+fallback; FAQ disclosure; unique IDs and fragment targets; 320/390/768/1024px page
+overflow; and usable feature/install content without JavaScript. The fixture makes
+no external requests and reports no script or CSP errors. Desktop/mobile
+screenshots were reviewed. Optional axe checks report no tested A/AA violations
+in wide/narrow and filtered/unfiltered views, not full accessibility certification.
+These checks do not verify the desktop app.
 
-## Verification
+## Publishing
 
-The published page is available at https://super-terminal.romagnolo.eu/ and is
-listed in Romagnolo's public project directory.
+The existing page is https://super-terminal.romagnolo.eu/ and is linked from
+Romagnolo's public project directory. It remains a static project page.
 
-Passed: JavaScript syntax; unique HTML IDs; local assets and fragment targets;
-Git whitespace checks; deployed HTTPS and security headers; exact public CSS,
-JavaScript and favicon content; origin HTML matching the committed source;
-sitemap availability; public project-directory entry; and HTTP 404 responses for
-the application API, `.env`, and the development README. The static container's
-health check passes. Cloudflare adds managed content to HTML and `robots.txt`.
+Deploy only these six assets: index.html, styles.css, site.js, favicon.svg,
+robots.txt and sitemap.xml. Keep this README, application/backend source, tests,
+SSH settings, credentials and workspace records out of the web root.
 
-Isolated browser checks pass for graph-node selection, all example providers,
-keyboard tab navigation, HTML IDs/fragment links, and no page overflow at 320/390
-CSS pixels. Desktop and mobile screenshots were reviewed; the graph scrolls
-within its own viewport on narrow screens. The installation-copy button retains
-its existing browser-dependent behavior. This page's checks do not verify the
-desktop app. No prebuilt release or project-wide open-source license is implied.
+Use an immutable release directory and retain the current release/configuration
+for rollback. Switch the current symlink atomically and recreate only the
+dedicated static page container. Check container health, all six origin hashes,
+HTTPS content/security headers and exact CSS/JS/favicon/sitemap bytes. Confirm
+that /api/state, /.env and /README.md return 404. Cloudflare may add managed
+content to HTML and robots.txt; compare original HTML at the origin.

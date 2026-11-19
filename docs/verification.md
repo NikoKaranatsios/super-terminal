@@ -6,7 +6,9 @@ Current source build: package `0.11.0`. The release candidate passes all **300 t
 
 The `0.11.0` release packages the installed graph workspace source and the buildless [project page](../website/README.md). Publication uses a reviewed source manifest from the existing workspace, retaining private local reports separately. The source scan checks known private paths/targets, credential patterns and generated artifacts. It does not confer a project license.
 
-The illustrative website graph uses invented content. Browser fixture checks pass for graph-node selection, all example providers, keyboard tabs, unique IDs, fragment links and page overflow at 320/390 CSS pixels. Desktop/mobile screenshots were reviewed. The graph can scroll within its own viewport on narrow screens. These website checks do not certify the desktop app; see the separate canvas and native-runtime evidence below.
+The interactive website uses invented content and performs no provider or shell requests. The [website fixture](../test/website.test.mjs) passes **12 checks including its parent test and optional axe run** under the production CSP. It covers question/reply transitions and counts, preserved per-session drafts, view-only limits, search/filters, parent/worktree scenarios, dragging without accidental opening, pan/zoom/Fit, keyboard selection and terminal focus, literal text handling, reset, installation copy and denied-clipboard fallback, FAQ disclosure, IDs/fragments, and no-JavaScript installation content. Wide and 320/390/768/1024px layouts have no page overflow; selected nodes remain reachable through the jump control and canvas navigation. Desktop/mobile screenshots were reviewed.
+
+Axe-core reports zero tested WCAG A/AA violations for wide/narrow and filtered/unfiltered states. This is not full accessibility certification. The fixture reports no external requests or script/CSP errors. These website checks do not certify the desktop app; see the separate canvas and native-runtime evidence below.
 
 ## Isolated-team runtime verification
 
